@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import json
 import os
 import re
@@ -14,6 +15,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# Auto-refresh every 60 seconds
+st_autorefresh(interval=60 * 1000, key="autorefresh")
 
 # ── Custom CSS ─────────────────────────────────────────────────────────────────
 st.markdown("""
