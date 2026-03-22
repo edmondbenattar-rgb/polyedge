@@ -160,7 +160,7 @@ h1, h2, h3 { font-family: 'Syne', sans-serif; font-weight: 800; }
 # ── Constants ──────────────────────────────────────────────────────────────────
 GAMMA_API         = "https://gamma-api.polymarket.com"
 TRADE_FILE        = "trades.jsonl"
-STARTING_BANKROLL = 1000.0
+STARTING_BANKROLL = 10000.0
 
 
 # ── Data class ─────────────────────────────────────────────────────────────────
@@ -218,11 +218,18 @@ def fetch_market(question: str) -> dict | None:
     if not date_m:
         return None
     date_hint = date_m.group(0).replace(" ", "-")
+    # Cache-bust with current minute so prices are always fresh
+    ts = int(datetime.now(timezone.utc).timestamp() // 60)
     for slug in [f"{asset}-above-on-{date_hint}", f"{asset}-price-above-on-{date_hint}"]:
         try:
             req = urllib.request.Request(
-                f"{GAMMA_API}/events?slug={slug}",
-                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+                f"{GAMMA_API}/events?slug={slug}&_={ts}",
+                headers={
+                    "User-Agent":  "Mozilla/5.0",
+                    "Accept":      "application/json",
+                    "Cache-Control": "no-cache, no-store",
+                    "Pragma":      "no-cache",
+                }
             )
             data = json.loads(urllib.request.urlopen(req, timeout=8).read())
             if not isinstance(data, list):
