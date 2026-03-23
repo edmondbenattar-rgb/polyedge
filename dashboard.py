@@ -278,7 +278,12 @@ def try_resolve(record: TradeRecord, market: dict) -> tuple[float, float] | None
     bet_won = (record.side == "YES" and yes_won) or (record.side == "NO" and not yes_won)
     avg = record.avg_price if record.avg_price and record.avg_price > 0 else record.p_market
     if bet_won:
-        pnl     = round(record.bet_size * (1.0 / avg - 1.0), 2) if avg > 0 else 0.0
+        if record.side == "YES":
+            entry = avg
+        else:
+            # For NO trades, avg_price is stored as YES price — convert to NO price
+            entry = 1.0 - avg
+        pnl     = round(record.bet_size * (1.0 / entry - 1.0), 2) if entry > 0 else 0.0
         outcome = 1.0
     else:
         pnl     = round(-record.bet_size, 2)
@@ -306,15 +311,17 @@ def run_resolver(trades: list[TradeRecord]) -> tuple[list[TradeRecord], int]:
 
 
 def calc_unrealised(record: TradeRecord, current_yes: float) -> float:
+    """Calculate unrealised PnL. avg_price is stored as the side price paid."""
     avg = record.avg_price if record.avg_price and record.avg_price > 0 else record.p_market
     if avg <= 0:
         return 0.0
     if record.side == "YES":
+        # avg = YES entry price, current = current YES price
         return round(record.bet_size * (current_yes / avg - 1), 2)
     else:
-        entry_no   = 1.0 - avg
+        # avg = NO entry price (already 1 - yes_price at time of entry)
         current_no = 1.0 - current_yes
-        return round(record.bet_size * (current_no / entry_no - 1), 2) if entry_no > 0 else 0.0
+        return round(record.bet_size * (current_no / avg - 1), 2) if avg > 0 else 0.0
 
 
 def pnl_cls(v: float) -> str:
@@ -340,13 +347,11 @@ def render():
     now     = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
 
-    # Load + resolve
+    # Load trades — trust outcome field only, no auto-resolving
+    # Resolution is handled by the bot locally
     trades = load_trades()
-    if trades:
-        trades, n_resolved = run_resolver(trades)
-        if n_resolved > 0:
-            save_trades(trades)
-            st.toast(f"✅ {n_resolved} trade(s) resolved!", icon="🎯")
+    if not trades:
+        trades = []
 
     open_trades = [t for t in trades if t.outcome is None]
     resolved    = sorted([t for t in trades if t.outcome is not None],
@@ -474,9 +479,12 @@ def render():
 
         for t in sorted(open_trades, key=get_end):
             m      = live_markets.get(t.market_id)
-            cp     = get_yes_price(m) if m else None
-            unr    = calc_unrealised(t, cp) if cp is not None else None
-            entry  = t.avg_price if t.avg_price and t.avg_price > 0 else t.p_market
+            yes_cp  = get_yes_price(m) if m else None
+            # Show correct side price in CURRENT column
+            cp      = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp is not None else None)
+            unr     = calc_unrealised(t, yes_cp) if yes_cp is not None else None
+            # Entry price is already stored correctly per side (avg_price = side price)
+            entry   = t.avg_price if t.avg_price and t.avg_price > 0 else t.p_market
             be     = breakeven_price(t)
             end_dt = m.get("endDate", "") if m else ""
             time_r, time_cls = fmt_time_remaining(end_dt)
