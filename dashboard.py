@@ -466,18 +466,66 @@ def render():
     if not open_trades:
         st.markdown('<div class="empty-state">No open positions</div>', unsafe_allow_html=True)
     else:
-        headers = ["Side", "Stake", "Entry", "Break-even", "Current",
-                   "Unreal. PnL", "Market", "Bought", "Closes In", "⏱", "🔗"]
-        hcols = st.columns([0.6, 0.7, 0.7, 0.8, 0.7, 0.9, 3.5, 0.9, 0.8, 0.4, 0.4])
-        for c, h in zip(hcols, headers):
-            c.markdown(f'<p class="col-header">{h}</p>', unsafe_allow_html=True)
+        # ── Sort state ───────────────────────────────────────────────────
+        if "sort_col" not in st.session_state:
+            st.session_state.sort_col = "closes_in"
+            st.session_state.sort_asc = True
 
-        # Sort by closest expiry first
-        def get_end(t):
-            m = live_markets.get(t.market_id)
-            return m.get("endDate", "9999") if m else "9999"
+        def sort_key(t):
+            m   = live_markets.get(t.market_id)
+            yes_cp = get_yes_price(m) if m else None
+            cp  = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp is not None else None)
+            unr = calc_unrealised(t, yes_cp) if yes_cp is not None else 0.0
+            col = st.session_state.sort_col
+            if col == "side":     return t.side
+            if col == "stake":    return t.bet_size
+            if col == "entry":    return t.avg_price or 0
+            if col == "current":  return cp or 0
+            if col == "pnl":      return unr or 0
+            if col == "market":   return t.question
+            if col == "bought":   return t.timestamp
+            if col == "closes_in":
+                end = m.get("endDate", "9999") if m else "9999"
+                return end
+            return "9999"
 
-        for t in sorted(open_trades, key=get_end):
+        sorted_trades = sorted(open_trades, key=sort_key,
+                               reverse=not st.session_state.sort_asc)
+
+        # ── Sortable column headers ───────────────────────────────────────
+        SORT_COLS = [
+            ("side",      "Side",       0.6),
+            ("stake",     "Stake",      0.7),
+            ("entry",     "Entry",      0.7),
+            (None,        "Break-even", 0.8),
+            ("current",   "Current",    0.7),
+            ("pnl",       "Unreal. PnL",0.9),
+            ("market",    "Market",     3.5),
+            ("bought",    "Bought",     0.9),
+            ("closes_in", "Closes In",  0.8),
+            (None,        "⏱",          0.4),
+            (None,        "🔗",          0.4),
+        ]
+
+        hcols = st.columns([c[2] for c in SORT_COLS])
+        for col_widget, (sort_id, label, _) in zip(hcols, SORT_COLS):
+            if sort_id:
+                active = st.session_state.sort_col == sort_id
+                arrow  = (" ↑" if st.session_state.sort_asc else " ↓") if active else ""
+                style  = "color:#a0a0ff;cursor:pointer" if active else "color:#303050;cursor:pointer"
+                if col_widget.button(f"{label}{arrow}", key=f"sort_{sort_id}",
+                                     use_container_width=True):
+                    if st.session_state.sort_col == sort_id:
+                        st.session_state.sort_asc = not st.session_state.sort_asc
+                    else:
+                        st.session_state.sort_col = sort_id
+                        st.session_state.sort_asc = True
+                    st.rerun()
+            else:
+                col_widget.markdown(f'<p class="col-header">{label}</p>',
+                                    unsafe_allow_html=True)
+
+        for t in sorted_trades:
             m      = live_markets.get(t.market_id)
             yes_cp  = get_yes_price(m) if m else None
             # Show correct side price in CURRENT column
