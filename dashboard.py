@@ -391,7 +391,7 @@ def render():
         if m:
             live_markets[t.market_id] = m
 
-    # Totals
+       # Totals – Corrected PnL logic
     total_invested   = sum(t.bet_size for t in open_trades)
     total_realised   = sum(t.pnl or 0 for t in resolved)
     total_unrealised = sum(
@@ -400,10 +400,13 @@ def render():
         if t.market_id in live_markets and get_yes_price(live_markets[t.market_id]) is not None
     )
     total_pnl  = total_realised + total_unrealised
-    bankroll   = STARTING_BANKROLL + total_realised
-    cash_left  = STARTING_BANKROLL - total_invested
+
+    # Corrected financial logic
+    bankroll   = STARTING_BANKROLL + total_realised          # Realised profit added back
+    cash_left  = bankroll - total_invested                   # This is the real available cash
+
     wins   = sum(1 for t in resolved if (t.pnl or 0) > 0)
-    losses = sum(1 for t in resolved if (t.pnl or 0) < 0)   # changed <= to <
+    losses = sum(1 for t in resolved if (t.pnl or 0) < 0)
     win_rate = f"{wins/(wins+losses)*100:.0f}% ({wins}/{wins+losses})" if (wins + losses) > 0 else "—"
     pnl_pct    = f"{(total_pnl/total_invested*100):+.1f}%" if total_invested > 0 else "—"
 
