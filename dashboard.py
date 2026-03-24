@@ -388,9 +388,9 @@ def render():
     total_pnl  = total_realised + total_unrealised
     bankroll   = STARTING_BANKROLL + total_realised
     cash_left  = STARTING_BANKROLL - total_invested
-    wins       = sum(1 for t in resolved if (t.pnl or 0) > 0)
-    losses     = sum(1 for t in resolved if (t.pnl or 0) <= 0)
-    win_rate   = f"{wins/(wins+losses)*100:.0f}%" if (wins + losses) > 0 else "—"
+    wins   = sum(1 for t in resolved if (t.pnl or 0) > 0)
+    losses = sum(1 for t in resolved if (t.pnl or 0) < 0)   # changed <= to <
+    win_rate = f"{wins/(wins+losses)*100:.0f}% ({wins}/{wins+losses})" if (wins + losses) > 0 else "—"
     pnl_pct    = f"{(total_pnl/total_invested*100):+.1f}%" if total_invested > 0 else "—"
 
     # Last scan time (most recent trade timestamp)
@@ -447,9 +447,7 @@ def render():
            "positive" if total_realised >= 0 else "negative")
     metric(cols[6], "Unrealised PnL",  fmt(total_unrealised),
            "positive" if total_unrealised >= 0 else "negative")
-    metric(cols[7], "Win Rate",        win_rate,
-           "positive" if wins > losses else ("negative" if losses > wins else "neutral"))
-
+    metric(cols[7], "Win Rate", win_rate,"positive" if wins > losses else "negative")
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Per-asset breakdown ──────────────────────────────────────────────────
