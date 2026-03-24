@@ -490,11 +490,13 @@ def render():
             cp  = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp is not None else None)
             unr = calc_unrealised(t, yes_cp) if yes_cp is not None else 0.0
             col = st.session_state.sort_col
-            if col == "side":     return t.side
-            if col == "stake":    return t.bet_size
+            if col == "side":       return t.side
+            if col == "confidence": return t.edge
+            if col == "stake":      return t.bet_size
             if col == "entry":    return t.avg_price or 0
             if col == "current":  return cp or 0
             if col == "pnl":      return unr or 0
+            if col == "pnl_pct":  return (unr / t.bet_size) if (unr is not None and t.bet_size > 0) else 0
             if col == "market":   return t.question
             if col == "bought":   return t.timestamp
             if col == "closes_in":
@@ -507,17 +509,19 @@ def render():
 
         # ── Sortable column headers ───────────────────────────────────────
         SORT_COLS = [
-            ("side",      "Side",       0.6),
-            ("stake",     "Stake",      0.7),
-            ("entry",     "Entry",      0.7),
-            (None,        "Break-even", 0.8),
-            ("current",   "Current",    0.7),
-            ("pnl",       "Unreal. PnL",0.9),
-            ("market",    "Market",     3.5),
-            ("bought",    "Bought",     0.9),
-            ("closes_in", "Closes In",  0.8),
-            (None,        "⏱",          0.4),
-            (None,        "🔗",          0.4),
+            ("side",       "Side",       0.6),
+            ("confidence", "Conf.",      0.6),
+            ("stake",      "Stake",      0.7),
+            ("entry",      "Entry",      0.7),
+            (None,         "Break-even", 0.8),
+            ("current",    "Current",    0.7),
+            ("pnl",        "Unreal. PnL",0.9),
+            ("pnl_pct",    "PnL %",      0.7),
+            ("market",     "Market",     3.5),
+            ("bought",     "Bought",     0.9),
+            ("closes_in",  "Closes In",  0.8),
+            (None,         "⏱",          0.4),
+            (None,         "🔗",          0.4),
         ]
 
         hcols = st.columns([c[2] for c in SORT_COLS])
@@ -554,37 +558,49 @@ def render():
             close_full = end_dt[:16].replace("T", " ") + " UTC" if end_dt else "—"
             url    = polymarket_url(m, t.question)
 
-            cols = st.columns([0.6, 0.7, 0.7, 0.8, 0.7, 0.9, 3.5, 0.9, 0.8, 0.4, 0.4])
+            cols = st.columns([0.6, 0.6, 0.7, 0.7, 0.8, 0.7, 0.9, 0.7, 3.5, 0.9, 0.8, 0.4, 0.4])
             conf_label, conf_cls = confidence_tier(t.edge)
             cols[0].markdown(
-                f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> '                f'<span class="{conf_cls}">{conf_label}</span>',
+                f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span>',
                 unsafe_allow_html=True)
-            cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>',
+            cols[1].markdown(
+                f'<span class="{conf_cls}">{conf_label}</span>',
+                unsafe_allow_html=True)
+            cols[2].markdown(f'<span class="mono">${t.bet_size:.2f}</span>',
                              unsafe_allow_html=True)
-            cols[2].markdown(f'<span class="mono">{entry:.3f}</span>',
+            cols[3].markdown(f'<span class="mono">{entry:.3f}</span>',
                              unsafe_allow_html=True)
-            cols[3].markdown(f'<span class="mono" style="color:#8080c0">{be}</span>',
+            cols[4].markdown(f'<span class="mono" style="color:#8080c0">{be}</span>',
                              unsafe_allow_html=True)
-            cols[4].markdown(
+            cols[5].markdown(
                 f'<span class="mono">{cp:.3f}</span>' if cp else
                 '<span class="mono" style="color:#404060">—</span>',
                 unsafe_allow_html=True)
-            cols[5].markdown(
+            cols[6].markdown(
                 f'<span class="{pnl_cls(unr)}">{fmt(unr)}</span>' if unr is not None else
                 '<span class="pnl-neutral">—</span>',
                 unsafe_allow_html=True)
-            cols[6].markdown(f'<span class="question-text">{t.question}</span>',
+            # PnL % column
+            if unr is not None and t.bet_size > 0:
+                pnl_pct = unr / t.bet_size * 100
+                pnl_pct_str = f"{'+'if pnl_pct>=0 else ''}{pnl_pct:.1f}%"
+                cols[7].markdown(
+                    f'<span class="{pnl_cls(unr)}">{pnl_pct_str}</span>',
+                    unsafe_allow_html=True)
+            else:
+                cols[7].markdown('<span class="pnl-neutral">—</span>', unsafe_allow_html=True)
+            cols[8].markdown(f'<span class="question-text">{t.question}</span>',
                              unsafe_allow_html=True)
-            cols[7].markdown(
+            cols[9].markdown(
                 f'<span class="mono" style="font-size:10px;color:#404060">{bought}</span>',
                 unsafe_allow_html=True)
-            cols[8].markdown(
+            cols[10].markdown(
                 f'<span class="mono" style="font-size:10px;color:#404060" title="{close_full}">{close_full[:10]}</span>',
                 unsafe_allow_html=True)
-            cols[9].markdown(
+            cols[11].markdown(
                 f'<span class="{time_cls}">{time_r}</span>',
                 unsafe_allow_html=True)
-            cols[10].markdown(
+            cols[12].markdown(
                 f'<a href="{url}" target="_blank" class="link-btn">↗</a>',
                 unsafe_allow_html=True)
 
