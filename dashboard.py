@@ -255,63 +255,71 @@ def breakeven_price(record: TradeRecord) -> str:
 
 
 def try_resolve(record: TradeRecord, market: dict) -> tuple[float, float] | None:
-    if not market.get("closed", False):
+    """Resolve if expiration date has passed (simpler + more reliable)."""
+    if not market:
         return None
-    end_date = market.get("endDate", "")
-    if end_date:
-        try:
-            end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-            if end_dt > datetime.now(timezone.utc):
-                return None
-        except Exception:
-            pass
-    prices = market.get("outcomePrices") or []
-    if isinstance(prices, str):
-        try:
-            prices = json.loads(prices)
-        except Exception:
-            return None
-    if len(prices) < 2:
+
+    end_date = market.get("endDate") or market.get("endDateIso", "")
+    if not end_date:
         return None
+
     try:
-        yes_price = float(prices[0])
-    except (ValueError, TypeError):
-        return None
-    yes_won = yes_price > 0.5
-    bet_won = (record.side == "YES" and yes_won) or (record.side == "NO" and not yes_won)
-    avg = record.avg_price if record.avg_price and record.avg_price > 0 else record.p_market
-    if bet_won:
-        if record.side == "YES":
-            entry = avg
-        else:
-            # For NO trades, avg_price is stored as YES price — convert to NO price
-            entry = 1.0 - avg
-        pnl     = round(record.bet_size * (1.0 / entry - 1.0), 2) if entry > 0 else 0.0
-        outcome = 1.0
-    else:
-        pnl     = round(-record.bet_size, 2)
-        outcome = 0.0
-    return outcome, pnl
+        # Parse end date
+        end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+
+        # If expiration has passed → consider resolved
+        if end_dt <= now:
+            prices = market.get("outcomePrices") or []
+            if isinstance(prices, str):
+                try:
+                    prices = json.loads(prices)
+                except Exception:
+                    return None
+            if len(prices) < 2:
+                return None
+
+            yes_price = float(prices[0])
+            yes_won = yes_price > 0.5
+
+            bet_won = (record.side == "YES" and yes_won) or (record.side == "NO" and not yes_won)
+
+            avg = record.avg_price if record.avg_price and record.avg_price > 0 else record.p_market
+            if bet_won:
+                entry = avg if record.side == "YES" else (1.0 - avg)
+                pnl = round(record.bet_size * (1.0 / entry - 1.0), 2) if entry > 0 else 0.0
+                outcome = 1.0
+            else:
+                pnl = round(-record.bet_size, 2)
+                outcome = 0.0
+
+            return outcome, pnl
+
+    except Exception:
+        pass
+
+    return None  # still open
 
 
 def run_resolver(trades: list[TradeRecord]) -> tuple[list[TradeRecord], int]:
+    """Run resolver with expiration-based logic."""
     resolved_count = 0
     updated = []
     for record in trades:
         if record.outcome is not None:
             updated.append(record)
             continue
+
         market = fetch_market(record.question)
         if market:
             result = try_resolve(record, market)
             if result:
-                outcome, pnl   = result
+                outcome, pnl = result
                 record.outcome = outcome
-                record.pnl     = pnl
+                record.pnl = pnl
                 resolved_count += 1
         updated.append(record)
     return updated, resolved_count
-
 
 def calc_unrealised(record: TradeRecord, current_yes: float) -> float:
     """Calculate unrealised PnL. avg_price is stored as the side price paid."""
