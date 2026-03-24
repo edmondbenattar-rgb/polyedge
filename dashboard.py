@@ -255,71 +255,63 @@ def breakeven_price(record: TradeRecord) -> str:
 
 
 def try_resolve(record: TradeRecord, market: dict) -> tuple[float, float] | None:
-    """Resolve if expiration date has passed (simpler + more reliable)."""
-    if not market:
+    if not market.get("closed", False):
         return None
-
-    end_date = market.get("endDate") or market.get("endDateIso", "")
-    if not end_date:
-        return None
-
-    try:
-        # Parse end date
-        end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-
-        # If expiration has passed → consider resolved
-        if end_dt <= now:
-            prices = market.get("outcomePrices") or []
-            if isinstance(prices, str):
-                try:
-                    prices = json.loads(prices)
-                except Exception:
-                    return None
-            if len(prices) < 2:
+    end_date = market.get("endDate", "")
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+            if end_dt > datetime.now(timezone.utc):
                 return None
-
-            yes_price = float(prices[0])
-            yes_won = yes_price > 0.5
-
-            bet_won = (record.side == "YES" and yes_won) or (record.side == "NO" and not yes_won)
-
-            avg = record.avg_price if record.avg_price and record.avg_price > 0 else record.p_market
-            if bet_won:
-                entry = avg if record.side == "YES" else (1.0 - avg)
-                pnl = round(record.bet_size * (1.0 / entry - 1.0), 2) if entry > 0 else 0.0
-                outcome = 1.0
-            else:
-                pnl = round(-record.bet_size, 2)
-                outcome = 0.0
-
-            return outcome, pnl
-
-    except Exception:
-        pass
-
-    return None  # still open
+        except Exception:
+            pass
+    prices = market.get("outcomePrices") or []
+    if isinstance(prices, str):
+        try:
+            prices = json.loads(prices)
+        except Exception:
+            return None
+    if len(prices) < 2:
+        return None
+    try:
+        yes_price = float(prices[0])
+    except (ValueError, TypeError):
+        return None
+    yes_won = yes_price > 0.5
+    bet_won = (record.side == "YES" and yes_won) or (record.side == "NO" and not yes_won)
+    avg = record.avg_price if record.avg_price and record.avg_price > 0 else record.p_market
+    if bet_won:
+        if record.side == "YES":
+            entry = avg
+        else:
+            # For NO trades, avg_price is stored as YES price — convert to NO price
+            entry = 1.0 - avg
+        pnl     = round(record.bet_size * (1.0 / entry - 1.0), 2) if entry > 0 else 0.0
+        outcome = 1.0
+    else:
+        pnl     = round(-record.bet_size, 2)
+        outcome = 0.0
+    return outcome, pnl
 
 
 def run_resolver(trades: list[TradeRecord]) -> tuple[list[TradeRecord], int]:
-    """Run resolver with expiration-based logic."""
     resolved_count = 0
     updated = []
     for record in trades:
         if record.outcome is not None:
             updated.append(record)
             continue
-
         market = fetch_market(record.question)
         if market:
             result = try_resolve(record, market)
             if result:
-                outcome, pnl = result
+                outcome, pnl   = result
                 record.outcome = outcome
-                record.pnl = pnl
+                record.pnl     = pnl
                 resolved_count += 1
         updated.append(record)
     return updated, resolved_count
+
 
 def calc_unrealised(record: TradeRecord, current_yes: float) -> float:
     """Calculate unrealised PnL. avg_price is stored as the side price paid."""
@@ -368,15 +360,9 @@ def render():
     now     = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
 
-    # Load trades + force resolution from Gamma API (this fixes Realised PnL + Win Rate)
+    # Load trades — trust outcome field only, no auto-resolving
+    # Resolution is handled by the bot locally
     trades = load_trades()
-    if trades:                                      # only run resolver if we have trades
-        trades, resolved_count = run_resolver(trades)
-        if resolved_count > 0:
-            save_trades(trades)
-            st.toast(f"✅ Resolved {resolved_count} closed markets", icon="🎯")
-
-    # Fallback if file was empty
     if not trades:
         trades = []
 
@@ -391,7 +377,7 @@ def render():
         if m:
             live_markets[t.market_id] = m
 
-       # Totals – Corrected PnL logic
+    # Totals
     total_invested   = sum(t.bet_size for t in open_trades)
     total_realised   = sum(t.pnl or 0 for t in resolved)
     total_unrealised = sum(
@@ -400,14 +386,11 @@ def render():
         if t.market_id in live_markets and get_yes_price(live_markets[t.market_id]) is not None
     )
     total_pnl  = total_realised + total_unrealised
-
-    # Corrected financial logic
-    bankroll   = STARTING_BANKROLL + total_realised          # Realised profit added back
-    cash_left  = bankroll - total_invested                   # This is the real available cash
-
-    wins   = sum(1 for t in resolved if (t.pnl or 0) > 0)
-    losses = sum(1 for t in resolved if (t.pnl or 0) < 0)
-    win_rate = f"{wins/(wins+losses)*100:.0f}% ({wins}/{wins+losses})" if (wins + losses) > 0 else "—"
+    bankroll   = STARTING_BANKROLL + total_realised
+    cash_left  = STARTING_BANKROLL - total_invested
+    wins       = sum(1 for t in resolved if (t.pnl or 0) > 0)
+    losses     = sum(1 for t in resolved if (t.pnl or 0) <= 0)
+    win_rate   = f"{wins/(wins+losses)*100:.0f}%" if (wins + losses) > 0 else "—"
     pnl_pct    = f"{(total_pnl/total_invested*100):+.1f}%" if total_invested > 0 else "—"
 
     # Last scan time (most recent trade timestamp)
@@ -441,7 +424,7 @@ def render():
 
     st.markdown("---")
 
-        # ── Metrics ─────────────────────────────────────────────────────────────
+    # ── Metrics ─────────────────────────────────────────────────────────────
     cols = st.columns(8)
 
     def metric(col, label, value, css="neutral"):
@@ -464,11 +447,9 @@ def render():
            "positive" if total_realised >= 0 else "negative")
     metric(cols[6], "Unrealised PnL",  fmt(total_unrealised),
            "positive" if total_unrealised >= 0 else "negative")
-    
-    # FIXED Win Rate rendering
-    win_rate_css = "positive" if wins > losses else ("negative" if losses > wins else "neutral")
-    metric(cols[7], "Win Rate", win_rate, win_rate_css)
-    
+    metric(cols[7], "Win Rate",        win_rate,
+           "positive" if wins > losses else ("negative" if losses > wins else "neutral"))
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Per-asset breakdown ──────────────────────────────────────────────────
