@@ -83,6 +83,9 @@ h1, h2, h3 { font-family: 'Syne', sans-serif; font-weight: 800; }
     border: 1px solid #ff446640; padding: 2px 10px;
     border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700;
 }
+.badge-high   { background: rgba(0,212,100,0.15); color: #00d464; border: 1px solid #00d46440; padding: 2px 7px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 9px; font-weight: 700; }
+.badge-medium { background: rgba(255,200,0,0.15);  color: #ffc800; border: 1px solid #ffc80040; padding: 2px 7px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 9px; font-weight: 700; }
+.badge-low    { background: rgba(160,160,255,0.15); color: #a0a0ff; border: 1px solid #a0a0ff40; padding: 2px 7px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 9px; font-weight: 700; }
 .badge-won { background: rgba(0,212,170,0.1); color: #00d4aa; border: 1px solid #00d4aa30; padding: 2px 10px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; }
 .badge-lost { background: rgba(255,68,102,0.1); color: #ff4466; border: 1px solid #ff446630; padding: 2px 10px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; }
 .mono { font-family: 'Space Mono', monospace; font-size: 12px; }
@@ -328,6 +331,16 @@ def pnl_cls(v: float) -> str:
     return "pnl-positive" if v > 0 else ("pnl-negative" if v < 0 else "pnl-neutral")
 
 
+def confidence_tier(edge: float) -> tuple[str, str]:
+    """Returns (label, css_class) based on relative edge thresholds."""
+    if edge >= 0.30:
+        return "HIGH",   "badge-high"
+    elif edge >= 0.18:
+        return "MED",    "badge-medium"
+    else:
+        return "LOW",    "badge-low"
+
+
 def fmt(v: float) -> str:
     return f"{'+'if v>=0 else ''}${v:.2f}"
 
@@ -542,8 +555,9 @@ def render():
             url    = polymarket_url(m, t.question)
 
             cols = st.columns([0.6, 0.7, 0.7, 0.8, 0.7, 0.9, 3.5, 0.9, 0.8, 0.4, 0.4])
+            conf_label, conf_cls = confidence_tier(t.edge)
             cols[0].markdown(
-                f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span>',
+                f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> '                f'<span class="{conf_cls}">{conf_label}</span>',
                 unsafe_allow_html=True)
             cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>',
                              unsafe_allow_html=True)
@@ -590,8 +604,9 @@ def render():
             won      = (t.pnl or 0) > 0
             pnl_pct_t = f"{((t.pnl or 0)/t.bet_size*100):+.0f}%" if t.bet_size > 0 else "—"
             cols = st.columns([0.6, 0.8, 0.8, 0.8, 0.8, 4, 0.9])
+            conf_label, conf_cls = confidence_tier(t.edge)
             cols[0].markdown(
-                f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span>',
+                f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> '                f'<span class="{conf_cls}">{conf_label}</span>',
                 unsafe_allow_html=True)
             cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>',
                              unsafe_allow_html=True)
