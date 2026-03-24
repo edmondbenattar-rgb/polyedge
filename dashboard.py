@@ -360,9 +360,15 @@ def render():
     now     = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
 
-    # Load trades — trust outcome field only, no auto-resolving
-    # Resolution is handled by the bot locally
+    # Load trades + force resolution from Gamma API (this fixes Realised PnL + Win Rate)
     trades = load_trades()
+    if trades:                                      # only run resolver if we have trades
+        trades, resolved_count = run_resolver(trades)
+        if resolved_count > 0:
+            save_trades(trades)
+            st.toast(f"✅ Resolved {resolved_count} closed markets", icon="🎯")
+
+    # Fallback if file was empty
     if not trades:
         trades = []
 
@@ -424,7 +430,7 @@ def render():
 
     st.markdown("---")
 
-    # ── Metrics ─────────────────────────────────────────────────────────────
+        # ── Metrics ─────────────────────────────────────────────────────────────
     cols = st.columns(8)
 
     def metric(col, label, value, css="neutral"):
@@ -447,7 +453,11 @@ def render():
            "positive" if total_realised >= 0 else "negative")
     metric(cols[6], "Unrealised PnL",  fmt(total_unrealised),
            "positive" if total_unrealised >= 0 else "negative")
-    metric(cols[7], "Win Rate", win_rate,"positive" if wins > losses else "negative")
+    
+    # FIXED Win Rate rendering
+    win_rate_css = "positive" if wins > losses else ("negative" if losses > wins else "neutral")
+    metric(cols[7], "Win Rate", win_rate, win_rate_css)
+    
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Per-asset breakdown ──────────────────────────────────────────────────
