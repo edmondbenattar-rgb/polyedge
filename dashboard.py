@@ -329,7 +329,8 @@ def polymarket_url(market: dict | None, question: str) -> str:
     # Gold: extract price target from question
     if "gold" in q or "gc" in q:
         # "Will Gold (GC) settle over $5,600 on the final trading day of June 2026?"
-        price_match = re.search(r'\$?(\d{1,2},?\d{3,4})', question)
+        # Look for price AFTER "over" or "above" keyword
+        price_match = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
         if price_match:
             price = price_match.group(1).replace(",", "")
             return f"{POLYMARKET_BASE}/gc-over-under-jun-2026/gc-above-{price}-jun-2026"
@@ -352,8 +353,9 @@ def polymarket_url(market: dict | None, question: str) -> str:
                 day = date_m.group(2)
                 date_slug = f"{month}-{day}"
                 
-                # Extract price target if present: "$45,000" → "45000"
-                price_m = re.search(r'\$?([\d,]+(?:\.\d+)?)', q)
+                # Extract price target: look for price AFTER "above" or "over" keyword
+                # "Will Ethereum be above $2,100 on March 27?"
+                price_m = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
                 if price_m:
                     price = price_m.group(1).replace(",", "")
                     market_slug = f"{display_name}-above-{price}-{date_slug}"
