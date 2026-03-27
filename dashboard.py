@@ -78,7 +78,6 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
 .dry-run-badge { background: rgba(255,180,0,0.1); color: #ffb400; border: 1px solid #ffb40040; padding: 3px 12px; border-radius: 20px; font-size: 10.5px; }
 .empty-state { text-align: center; padding: 40px; font-size: 13px; color: #404060; }
 
-/* Tight single-line column headers */
 .col-header { 
     font-family: 'Space Mono', monospace; 
     font-size: 9.4px; 
@@ -122,7 +121,7 @@ class TradeRecord:
     outcome: Optional[float] = None
     dry_run: bool = True
 
-# ── API Helpers ────────────────────────────────────────────────────────────────
+# ── API Helpers (kept simple & stable) ────────────────────────────────────────
 def load_trades() -> list[TradeRecord]:
     if not os.path.exists(TRADE_FILE): return []
     records = []
@@ -172,10 +171,7 @@ def _fetch_market_by_question(question: str) -> dict | None:
 def fetch_market(question: str, market_id: str = None) -> dict | None:
     if market_id:
         m = fetch_market_by_id(market_id)
-        if m:
-            if not m.get("_slug") and m.get("slug"):
-                m["_slug"] = m["slug"]
-            return m
+        if m: return m
     return _fetch_market_by_question(question)
 
 def get_yes_price(market: dict) -> float | None:
@@ -187,24 +183,21 @@ def get_yes_price(market: dict) -> float | None:
         return None
 
 def polymarket_url(market: dict | None, question: str) -> str:
-    """Final robust version: Prefer real _slug from API. Smart fallbacks for Gold + Crypto."""
+    """Stable version: Crypto works as before + targeted Gold fix"""
     if market:
-        # Primary: Use exact slug from API
         if market.get("_slug"):
             return f"{POLYMARKET_BASE}/event/{market['_slug']}"
         if market.get("slug"):
             return f"{POLYMARKET_BASE}/event/{market['slug']}"
-        if market.get("conditionId"):
-            return f"https://polymarket.com/market/{market['conditionId']}"
 
-    # Gold specific fallback (real observed slugs)
+    # Gold targeted fix (only this market)
     q = question.lower()
     if "gold" in q or "gc" in q:
         if "6200" in q or "6,200" in question:
             return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
         return "https://polymarket.com/event/gc-over-under-jun-2026"
 
-    # Crypto fallback with flexible date
+    # Crypto fallback (original working version)
     asset_map = {"bitcoin": "bitcoin", "btc": "bitcoin", "ethereum": "ethereum", 
                  "eth": "ethereum", "solana": "solana", "xrp": "xrp"}
     asset = next((a for a in asset_map if a in q), None)
@@ -215,9 +208,9 @@ def polymarket_url(market: dict | None, question: str) -> str:
             date_hint = date_m.group(0).replace(" ", "-").lower()
             return f"{POLYMARKET_BASE}/event/{asset_slug}-above-on-{date_hint}"
     
-    # Ultimate safe fallback
     return "https://polymarket.com"
 
+# Rest of the functions (fmt_time_remaining, fmt_timestamp, etc.) remain the same as the tight version you liked
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
     if not end_date_str: return "—", "time-ok"
     try:
@@ -271,7 +264,7 @@ def identify_asset(question: str) -> str:
     if "gold" in q or "gc" in q: return "GOLD"
     return "OTHER"
 
-# ── Render (tight version) ─────────────────────────────────────────────────────
+# ── Render (same tight version you liked) ─────────────────────────────────────
 def render():
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
