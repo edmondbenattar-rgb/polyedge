@@ -152,9 +152,11 @@ def _fetch_market_by_question(question: str) -> dict | None:
     q = question.lower()
     asset = next((a for a in ["bitcoin","ethereum","solana","xrp","gold"] if a in q), None)
     if not asset: return None
-    date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
+    
+    # Try multiple date formats: "June 24", "June-24", "June 2026", "June-2026"
+    date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s*[-\s]?(\d{1,4})', q)
     if not date_m: return None
-    date_hint = date_m.group(0).replace(" ", "-")
+    date_hint = date_m.group(0).replace(" ", "-").lower()
     ts = int(datetime.now(timezone.utc).timestamp() // 60)
     for slug in [f"{asset}-above-on-{date_hint}", f"{asset}-price-above-on-{date_hint}"]:
         try:
@@ -215,7 +217,8 @@ def polymarket_url(market: dict | None, question: str) -> str:
         date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
         if date_m:
             date_hint = date_m.group(0).replace(" ", "-").lower()
-            return f"{POLYMARKET_BASE}/event/{asset_slug}-above-on-{date_hint}"
+            market_slug = f"{asset_slug}-above-{date_hint}"
+            return f"{POLYMARKET_BASE}/event/{market_slug}/{market_slug}"
     
     return "https://polymarket.com"
 
