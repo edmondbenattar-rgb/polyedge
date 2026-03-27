@@ -314,22 +314,41 @@ def get_yes_price(market: dict) -> float | None:
     
     return None
 
-def polymarket_url(market: dict | None, question: str) -> str:
-    """Robust URL builder: Direct question parsing + API slug fallback."""
-    if market and market.get("_slug"):
-        return f"{POLYMARKET_BASE}/{market['_slug']}"
-    if market and market.get("slug"):
-        return f"{POLYMARKET_BASE}/{market['slug']}"
-    if market and market.get("conditionId"):
-        return f"https://polymarket.com/market/{market['conditionId']}"
+def polymarket_url(market: dict | None, question: str, market_id: str = None) -> str:
+    """
+    Build Polymarket URL using multiple strategies:
+    1. If market_id provided: use it to fetch slug from API or construct direct URL
+    2. If market has slug: use market slug
+    3. If market has conditionId: use market's condition ID
+    4. Fallback: construct from question text
+    """
+    # Strategy 1: Use market_id if provided (most reliable)
+    if market_id:
+        # If we have market data, prefer its slug/conditionId
+        if market:
+            if market.get("_slug"):
+                return f"{POLYMARKET_BASE}/{market['_slug']}"
+            if market.get("slug"):
+                return f"{POLYMARKET_BASE}/{market['slug']}"
+            if market.get("conditionId"):
+                return f"https://polymarket.com/market/{market['conditionId']}"
+        # If no market data but we have market_id, use direct ID link
+        return f"https://polymarket.com/market/{market_id}"
+    
+    # Strategy 2: Use market object if available
+    if market:
+        if market.get("_slug"):
+            return f"{POLYMARKET_BASE}/{market['_slug']}"
+        if market.get("slug"):
+            return f"{POLYMARKET_BASE}/{market['slug']}"
+        if market.get("conditionId"):
+            return f"https://polymarket.com/market/{market['conditionId']}"
 
-    # Direct extraction from question text (works offline)
+    # Strategy 3: Fallback to question-based extraction (less accurate but works offline)
     q = question.lower()
     
     # Gold: extract price target from question
     if "gold" in q or "gc" in q:
-        # "Will Gold (GC) settle over $5,600 on the final trading day of June 2026?"
-        # Look for price AFTER "over" or "above" keyword
         price_match = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
         if price_match:
             price = price_match.group(1).replace(",", "")
@@ -346,15 +365,12 @@ def polymarket_url(market: dict | None, question: str) -> str:
     
     for asset_name, (display_name, _) in asset_map.items():
         if asset_name in q:
-            # Extract date: "march 24" → "march-24"
             date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
             if date_m:
                 month = date_m.group(1).lower()
                 day = date_m.group(2)
                 date_slug = f"{month}-{day}"
                 
-                # Extract price target: look for price AFTER "above" or "over" keyword
-                # "Will Ethereum be above $2,100 on March 27?"
                 price_m = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
                 if price_m:
                     price = price_m.group(1).replace(",", "")
@@ -363,6 +379,7 @@ def polymarket_url(market: dict | None, question: str) -> str:
                     market_slug = f"{display_name}-above-{date_slug}"
                 
                 return f"{POLYMARKET_BASE}/{market_slug}/{market_slug}"
+            break  # Only process first matching asset
     
     return "https://polymarket.com"
 
@@ -613,7 +630,7 @@ def render():
                 end_dt = extract_expiry_from_question(t.question) or ""
             time_r, time_cls = fmt_time_remaining(end_dt)
             bought = fmt_timestamp(t.timestamp)
-            url = polymarket_url(m, t.question)
+            url = polymarket_url(m, t.question, t.market_id)
 
             cols = st.columns([c[2] for c in SORT_COLS])
             conf_label, conf_cls = confidence_tier(t.edge)
