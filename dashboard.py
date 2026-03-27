@@ -399,13 +399,12 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
                 price_m = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
                 if price_m:
                     price = price_m.group(1).replace(",", "")
-                    market_slug = f"{display_name}-above-{price}-on-{date_slug}"
+                    market_slug = f"{display_name}-above-{price}-{date_slug}"
                 else:
-                    market_slug = f"{display_name}-above-on-{date_slug}"
+                    market_slug = f"{display_name}-above-{date_slug}"
                 
-                # Event slug is the base (without price)
-                event_slug = f"{display_name}-above-on-{date_slug}"
-                return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+                # Build URL with BOTH event and market slug (they're the same for crypto)
+                return f"https://polymarket.com/event/{market_slug}/{market_slug}"
             break
     
     return "https://polymarket.com"
