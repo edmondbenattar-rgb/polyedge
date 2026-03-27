@@ -127,14 +127,59 @@ class TradeRecord:
 def load_trades() -> list[TradeRecord]:
     if not os.path.exists(TRADE_FILE): return []
     records = []
+    skipped = []
     with open(TRADE_FILE) as f:
-        for line in f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
-            if line:
-                try:
-                    records.append(TradeRecord(**json.loads(line)))
-                except:
-                    pass
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                
+                # Ensure all required fields exist with fallbacks
+                required_fields = {
+                    'timestamp': '',
+                    'market_id': '',
+                    'question': '',
+                    'side': 'YES',
+                    'p_model': 0.0,
+                    'p_market': 0.0,
+                    'edge': 0.0,
+                    'ev': 0.0,
+                    'kelly_f': 0.0,
+                    'bet_size': 0.0,
+                    'order_id': '',
+                    'avg_price': 0.0,
+                    'pnl': None,
+                    'outcome': None,
+                    'dry_run': True,
+                }
+                
+                # Fill in missing fields with defaults
+                for key, default in required_fields.items():
+                    if key not in data:
+                        data[key] = default
+                
+                # Only extract fields the dataclass expects (ignore extras)
+                filtered_data = {k: data[k] for k in required_fields.keys()}
+                record = TradeRecord(**filtered_data)
+                records.append(record)
+                
+            except Exception as e:
+                skipped.append({
+                    'line': line_num,
+                    'error': str(e),
+                    'data': data if 'data' in locals() else line[:80]
+                })
+    
+    # Log warnings if trades were skipped
+    if skipped:
+        print(f"⚠️  WARNING: {len(skipped)} trades skipped from {TRADE_FILE}")
+        for item in skipped[:3]:  # Show first 3 only
+            print(f"   Line {item['line']}: {item['error']}")
+        if len(skipped) > 3:
+            print(f"   ... and {len(skipped) - 3} more")
+    
     return records
 
 def fetch_market_by_id(market_id: str) -> dict | None:
