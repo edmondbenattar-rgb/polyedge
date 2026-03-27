@@ -316,35 +316,24 @@ def get_yes_price(market: dict) -> float | None:
 
 def polymarket_url(market: dict | None, question: str, market_id: str = None) -> str:
     """
-    Build Polymarket URL using multiple strategies:
-    1. If market_id provided: use it to fetch slug from API or construct direct URL
-    2. If market has slug: use market slug
-    3. If market has conditionId: use market's condition ID
-    4. Fallback: construct from question text
+    Build Polymarket URL using market_id (conditionId) as primary source.
+    The market_id is the on-chain unique identifier for each specific market.
+    Using /market/{conditionId} is the most reliable way to route to the exact trade.
     """
-    # Strategy 1: Use market_id if provided (most reliable)
+    # ALWAYS use market_id (conditionId) if provided — it's the unique identifier
     if market_id:
-        # If we have market data, prefer its slug/conditionId
-        if market:
-            if market.get("_slug"):
-                return f"{POLYMARKET_BASE}/{market['_slug']}"
-            if market.get("slug"):
-                return f"{POLYMARKET_BASE}/{market['slug']}"
-            if market.get("conditionId"):
-                return f"https://polymarket.com/market/{market['conditionId']}"
-        # If no market data but we have market_id, use direct ID link
         return f"https://polymarket.com/market/{market_id}"
     
-    # Strategy 2: Use market object if available
+    # Fallback: if no market_id but we have market object, try to extract conditionId from API response
     if market:
+        if market.get("conditionId"):
+            return f"https://polymarket.com/market/{market['conditionId']}"
         if market.get("_slug"):
             return f"{POLYMARKET_BASE}/{market['_slug']}"
         if market.get("slug"):
             return f"{POLYMARKET_BASE}/{market['slug']}"
-        if market.get("conditionId"):
-            return f"https://polymarket.com/market/{market['conditionId']}"
 
-    # Strategy 3: Fallback to question-based extraction (less accurate but works offline)
+    # Last resort: Fallback to question-based extraction (less accurate but works offline)
     q = question.lower()
     
     # Gold: extract price target from question
@@ -379,7 +368,7 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
                     market_slug = f"{display_name}-above-{date_slug}"
                 
                 return f"{POLYMARKET_BASE}/{market_slug}/{market_slug}"
-            break  # Only process first matching asset
+            break
     
     return "https://polymarket.com"
 
