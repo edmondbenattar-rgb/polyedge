@@ -173,7 +173,11 @@ def _fetch_market_by_question(question: str) -> dict | None:
 def fetch_market(question: str, market_id: str = None) -> dict | None:
     if market_id:
         m = fetch_market_by_id(market_id)
-        if m: return m
+        if m:
+            # Ensure _slug is set
+            if not m.get("_slug") and m.get("slug"):
+                m["_slug"] = m["slug"]
+            return m
     return _fetch_market_by_question(question)
 
 def get_yes_price(market: dict) -> float | None:
@@ -185,28 +189,46 @@ def get_yes_price(market: dict) -> float | None:
         return None
 
 def polymarket_url(market: dict | None, question: str) -> str:
-    """Fixed: Use real slug from API when available, with Gold-specific fallback."""
-    if market and market.get("_slug"):
-        # Use the actual slug returned by Gamma API (most reliable)
-        return f"{POLYMARKET_BASE}/event/{market['_slug']}"
-    
-    # Fallback logic with better Gold support
+    """Robust URL builder: Prefer real slug from API, with smart fallbacks for Gold + Crypto."""
+    if market:
+        # Best: Use the exact slug returned by Gamma API
+        if market.get("_slug"):
+            slug = market["_slug"]
+            # Many markets are under /event/{slug}
+            return f"{POLYMARKET_BASE}/event/{slug}"
+        
+        # Some responses put slug under different keys
+        if market.get("slug"):
+            return f"{POLYMARKET_BASE}/event/{market['slug']}"
+        
+        # Fallback to conditionId-based if needed (rare)
+        if market.get("conditionId"):
+            return f"https://polymarket.com/market/{market['conditionId']}"
+
+    # Smart manual fallback when API slug is missing
     q = question.lower()
+    
+    # Gold handling (most common broken case)
     if "gold" in q or "gc" in q:
-        # Gold markets are under gc-over-under-jun-2026 or gc-hit-jun-2026
         if "6200" in q or "6,200" in question:
             return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
-        return "https://polymarket.com/event/gc-over-under-jun-2026"  # parent event
+        return "https://polymarket.com/event/gc-over-under-jun-2026"  # parent event for all June strikes
+
+    # Crypto fallback - improved regex to catch more patterns
+    asset_map = {"bitcoin": "bitcoin", "btc": "bitcoin", "ethereum": "ethereum", 
+                 "eth": "ethereum", "solana": "solana", "xrp": "xrp"}
+    asset = next((a for a in asset_map if a in q), None)
+    if asset:
+        asset_slug = asset_map[asset]
+        # Try to extract date + optional time
+        date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
+        if date_m:
+            date_hint = date_m.group(0).replace(" ", "-").lower()
+            return f"{POLYMARKET_BASE}/event/{asset_slug}-above-on-{date_hint}"
     
-    # Original crypto fallback (kept for speed)
-    asset = next((a for a in ["bitcoin", "ethereum", "solana", "xrp"] if a in q), "")
-    date_m = re.search(r'(january|february|march|april|may|june|july|august|'
-                       r'september|october|november|december)\s+(\d{1,2})', q)
-    if asset and date_m:
-        date_hint = date_m.group(0).replace(" ", "-")
-        return f"{POLYMARKET_BASE}/{asset}-above-on-{date_hint}"
-    
+    # Ultimate safe fallback
     return "https://polymarket.com"
+
 
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
     if not end_date_str: return "—", "time-ok"
