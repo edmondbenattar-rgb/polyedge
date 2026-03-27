@@ -318,16 +318,31 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
     """
     Build Polymarket URL using market_id (conditionId) as primary source.
     The market_id is the on-chain unique identifier for each specific market.
-    Using /market/{conditionId} is the most reliable way to route to the exact trade.
+    
+    Valid market_id: long hex string like 0x0cc187e7661fca5014bff69d9b520570a22d262bf6bc62a57ebfe40f5ea7ad9b
+    Invalid market_id: empty string, None, "unknown", or too short
     """
-    # ALWAYS use market_id (conditionId) if provided — it's the unique identifier
-    if market_id:
+    # Validate market_id: must be non-empty hex string starting with 0x
+    is_valid_market_id = (
+        market_id and 
+        isinstance(market_id, str) and 
+        market_id.startswith("0x") and 
+        len(market_id) > 10
+    )
+    
+    # Use market_id if valid
+    if is_valid_market_id:
         return f"https://polymarket.com/market/{market_id}"
     
-    # Fallback: if no market_id but we have market object, try to extract conditionId from API response
+    # Fallback: if no valid market_id but we have market object, try to extract conditionId or slug
     if market:
+        # Try conditionId from API response
         if market.get("conditionId"):
-            return f"https://polymarket.com/market/{market['conditionId']}"
+            cond_id = market.get("conditionId")
+            if cond_id and isinstance(cond_id, str) and cond_id.startswith("0x") and len(cond_id) > 10:
+                return f"https://polymarket.com/market/{cond_id}"
+        
+        # Try slug
         if market.get("_slug"):
             return f"{POLYMARKET_BASE}/{market['_slug']}"
         if market.get("slug"):
