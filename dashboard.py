@@ -342,14 +342,13 @@ def get_yes_price(market: dict) -> float | None:
 
 def polymarket_url(market: dict | None, question: str, market_id: str = None) -> str:
     """
-    Build Polymarket URL: https://polymarket.com/event/{event_slug}/{market_slug}
-    
-    event_slug = the grouped market (e.g., "ethereum-above-on-march-27")
-    market_slug = the specific price level (e.g., "ethereum-above-2100-on-march-27")
+    Build Polymarket URL:
+    - Gold: https://polymarket.com/event/{event_slug}/{market_slug}
+    - Crypto: https://polymarket.com/event/{event_slug}/ (no market_slug needed)
     """
     q = question.lower()
     
-    # GOLD MARKETS
+    # GOLD MARKETS - Uses event_slug/market_slug structure
     if "gold" in q or "gc" in q:
         price_match = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
         if price_match:
@@ -359,7 +358,7 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
             return f"https://polymarket.com/event/{event_slug}/{market_slug}"
         return "https://polymarket.com"
     
-    # CRYPTO MARKETS - Extract asset, price, date from question
+    # CRYPTO MARKETS - Uses only event_slug (with "on-")
     asset_map = {
         "bitcoin": "bitcoin",
         "ethereum": "ethereum",
@@ -376,19 +375,11 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
                 day = date_m.group(2)
                 date_slug = f"{month}-{day}"
                 
-                # Extract price
-                price_m = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
-                if price_m:
-                    price = price_m.group(1).replace(",", "")
-                    # event_slug is without price (the grouped market)
-                    event_slug = f"{display_name}-above-on-{date_slug}"
-                    # market_slug is with price (the specific price level)
-                    market_slug = f"{display_name}-above-{price}-on-{date_slug}"
-                else:
-                    event_slug = f"{display_name}-above-on-{date_slug}"
-                    market_slug = f"{display_name}-above-on-{date_slug}"
+                # Crypto event_slug includes "on-"
+                event_slug = f"{display_name}-above-on-{date_slug}"
                 
-                return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+                # Just return event_slug, no market_slug needed
+                return f"https://polymarket.com/event/{event_slug}/"
             break
     
     # Fallback to Polymarket home
