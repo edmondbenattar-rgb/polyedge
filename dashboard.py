@@ -8,6 +8,53 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Optional
 from collections import defaultdict
+import yfinance as yf
+
+import yfinance as yf
+
+# ── Gold Price Helpers (for accurate current prices on gold markets) ─────────────
+def get_gold_spot_price() -> float | None:
+    """Fetch current gold spot price from Yahoo Finance (GC=F is COMEX Gold futures)."""
+    try:
+        gold = yf.Ticker("GC=F")
+        data = gold.history(period="1d")
+        if not data.empty:
+            return float(data['Close'].iloc[-1])
+    except Exception:
+        pass
+    return None
+
+def gold_price_to_market_price(spot_price: float, target_price: float, side: str = "YES") -> float | None:
+    """
+    Convert gold spot price to market probability for "settle above $X" markets.
+    
+    Uses proximity-based mapping:
+    - If spot significantly > target: price ≈ 0.85-0.95 (high confidence YES)
+    - If spot < target: price ≈ 0.05-0.15 (high confidence NO)
+    - If spot ≈ target: price ≈ 0.45-0.55 (uncertain)
+    """
+    if spot_price is None or target_price is None or target_price <= 0:
+        return None
+    
+    try:
+        # Difference as percentage of target
+        diff_pct = (spot_price - target_price) / target_price
+        
+        # Use exponential-like curve: steeper near target, flattens at extremes
+        # For diff_pct = 0 (spot == target) -> prob = 0.5
+        # For diff_pct = 0.05 (5% above) -> prob ≈ 0.72
+        # For diff_pct = -0.05 (5% below) -> prob ≈ 0.28
+        prob = 0.5 + 0.45 * (2 / (1 + pow(2.718, -7 * diff_pct)) - 1)
+        
+        # Clamp to reasonable range [0.02, 0.98]
+        prob = max(0.02, min(0.98, prob))
+        
+        if side == "NO":
+            prob = 1.0 - prob
+        
+        return prob
+    except Exception:
+        return None
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -515,17 +562,33 @@ def render():
 
         for t in sorted_trades:
             m = live_markets.get(t.market_id)
+            
+            # Determine if this is a gold market
+            is_gold_market = "gold" in t.question.lower() or "gc" in t.question.lower()
+            
+            # Get current price: try API first, then gold spot price for gold markets
             yes_cp = get_yes_price(m) if m else None
+            
+            if yes_cp is None and is_gold_market:
+                # For gold markets, fetch real spot price and convert to probability
+                spot_price = get_gold_spot_price()
+                # Extract target price from question: "Will Gold (GC) settle over $5,600..."
+                target_m = re.search(r'\$?([\d,]+(?:\.\d+)?)', t.question)
+                if spot_price and target_m:
+                    target_price = float(target_m.group(1).replace(",", ""))
+                    yes_cp = gold_price_to_market_price(spot_price, target_price, side="YES")
+            
+            # Convert to side-aware price
             cp = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp is not None else None)
             
-            # Fallback: if no live price from API, use p_market from trade record as reference
-            if cp is None:
-                fallback_price = t.p_market if t.side == "YES" else (1.0 - t.p_market)
-                cp_display = f"{fallback_price:.3f}" if fallback_price > 0 else "—"
-                is_live_price = False
-            else:
+            # Display logic
+            if cp is not None:
                 cp_display = f"{cp:.3f}"
                 is_live_price = True
+            else:
+                # Price unavailable
+                cp_display = "—"
+                is_live_price = False
             
             unr = calc_unrealised(t, yes_cp)
             entry = t.avg_price if getattr(t, 'avg_price', 0) > 0 else t.p_market
@@ -546,8 +609,8 @@ def render():
             cols[2].markdown(f'<span class="mono">${t.bet_size:.2f}</span>', unsafe_allow_html=True)
             cols[3].markdown(f'<span class="mono">{entry:.3f}</span>', unsafe_allow_html=True)
             cols[4].markdown(f'<span class="mono" style="color:#8080c0">{be}</span>', unsafe_allow_html=True)
-            # Current price: show live if available, fallback to p_market with faded style if not
-            price_style = "color:#ffffff" if is_live_price else "color:#606080"
+            # Current price: show live if available, else show "—"
+            price_style = "color:#ffffff" if is_live_price else "color:#404060"
             cols[5].markdown(f'<span class="mono" style="{price_style}">{cp_display}</span>', unsafe_allow_html=True)
             cols[6].markdown(f'<span class="{pnl_cls(unr)}">{fmt(unr)}</span>', unsafe_allow_html=True)
             pnl_pct_str = f"{'+' if unr >= 0 else ''}{unr/t.bet_size*100:.1f}%" if t.bet_size > 0 else "—"
