@@ -19,29 +19,28 @@ st.set_page_config(
 
 st_autorefresh(interval=60 * 1000, key="autorefresh")
 
-# ── CSS (tighter text) ─────────────────────────────────────────────────────────
+# ── CSS (tighter headers + colored metrics) ───────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
 
 html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: #0a0a0f; color: #e8e8f0; }
 .stApp { background-color: #0a0a0f; }
-h1, h2, h3 { font-family: 'Syne', sans-serif; font-weight: 800; }
 
 .metric-card {
     background: linear-gradient(135deg, #12121a 0%, #1a1a2e 100%);
     border: 1px solid #2a2a4a;
     border-radius: 12px;
-    padding: 18px 12px;
+    padding: 16px 10px;
     text-align: center;
     height: 100%;
 }
-.metric-label { font-family: 'Space Mono', monospace; font-size: 9.5px; letter-spacing: 1.5px; text-transform: uppercase; color: #6060a0; margin-bottom: 6px; }
-.metric-value { font-family: 'Space Mono', monospace; font-size: 21px; font-weight: 700; color: #e8e8f0; }
+.metric-label { font-family: 'Space Mono', monospace; font-size: 9.2px; letter-spacing: 1.8px; text-transform: uppercase; color: #6060a0; margin-bottom: 6px; }
+.metric-value { font-family: 'Space Mono', monospace; font-size: 20px; font-weight: 700; }
 
 .section-title {
     font-family: 'Space Mono', monospace;
-    font-size: 10.5px;
+    font-size: 10.2px;
     letter-spacing: 2.5px;
     text-transform: uppercase;
     color: #4040a0;
@@ -65,20 +64,27 @@ h1, h2, h3 { font-family: 'Syne', sans-serif; font-weight: 800; }
 .badge-medium { background: rgba(255,200,0,0.15); color: #ffc800; }
 .badge-low { background: rgba(160,160,255,0.15); color: #a0a0ff; }
 
-.mono { font-family: 'Space Mono', monospace; font-size: 10.8px; }
-.question-text { font-size: 10.8px; color: #b0b0d0; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mono { font-family: 'Space Mono', monospace; font-size: 10.6px; }
+.question-text { font-size: 10.6px; color: #b0b0d0; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pnl-positive { color: #00d4aa; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 11.5px; }
 .pnl-negative { color: #ff4466; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 11.5px; }
 .pnl-neutral  { color: #6060a0; font-family: 'Space Mono', monospace; font-size: 11.5px; }
-.time-urgent, .time-soon, .time-ok { font-family: 'Space Mono', monospace; font-size: 10.5px; font-weight: 700; }
+.time-urgent, .time-soon, .time-ok { font-family: 'Space Mono', monospace; font-size: 10.4px; font-weight: 700; }
 .link-btn { color: #6060c0; font-size: 11px; text-decoration: none; }
 .dry-run-badge { background: rgba(255,180,0,0.1); color: #ffb400; border: 1px solid #ffb40040; padding: 3px 12px; border-radius: 20px; font-size: 10.5px; }
 .empty-state { text-align: center; padding: 40px; font-size: 13px; color: #404060; }
-.col-header { font-family: 'Space Mono', monospace; font-size: 9.8px; color: #303050; letter-spacing: 1px; text-transform: uppercase; }
+.col-header { 
+    font-family: 'Space Mono', monospace; 
+    font-size: 9.6px; 
+    color: #303050; 
+    letter-spacing: 0.8px; 
+    text-transform: uppercase; 
+    padding: 4px 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Constants ──────────────────────────────────────────────────────────────────
+# ── Constants & Data Class ─────────────────────────────────────────────────────
 GAMMA_API         = "https://gamma-api.polymarket.com"
 TRADE_FILE        = "trades.jsonl"
 STARTING_BANKROLL = 10000.0
@@ -255,7 +261,7 @@ def render():
         except:
             pass
 
-    # Header + Metrics (unchanged)
+    # Header + Metrics with color
     c1, c2, c3 = st.columns([3, 1, 2])
     with c1: 
         st.markdown("# PolyEdge")
@@ -290,7 +296,7 @@ def render():
             pct = amount / total_invested * 100 if total_invested > 0 else 0
             col.markdown(f'<div class="asset-card"><div class="asset-name">{asset}</div><div class="asset-amount">${amount:,.2f}</div><div style="font-size:10px;color:#404060">{pct:.0f}%</div></div>', unsafe_allow_html=True)
 
-    # Open Positions - Tight & Sortable (no duplicate Closes In)
+    # Open Positions - Tight headers + Closes In sortable
     st.markdown(f'<div class="section-title">OPEN POSITIONS ({len(open_trades)})</div>', unsafe_allow_html=True)
 
     if not open_trades:
@@ -315,6 +321,8 @@ def render():
             if col == "pnlpct": return unr / t.bet_size if t.bet_size else 0
             if col == "market": return t.question.lower()
             if col == "bought": return t.timestamp
+            if col == "closes_in":
+                return m.get("endDate", "9999") if m else "9999"
             return ""
 
         sorted_trades = sorted(open_trades, key=sort_key, reverse=not st.session_state.sort_asc)
@@ -323,7 +331,7 @@ def render():
             ("side", "Side", 0.55), ("conf", "Conf", 0.55), ("stake", "Stake", 0.75),
             ("entry", "Entry", 0.65), (None, "BE", 0.65), ("current", "Current", 0.65),
             ("pnl", "Unreal PnL", 0.9), ("pnlpct", "PnL%", 0.7), ("market", "Market", 4.8),
-            ("bought", "Bought", 0.9), (None, "⏱", 0.55), (None, "🔗", 0.4)
+            ("bought", "Bought", 0.9), ("closes_in", "Closes In", 0.75), (None, "🔗", 0.4)
         ]
 
         hcols = st.columns([c[2] for c in SORT_COLS])
