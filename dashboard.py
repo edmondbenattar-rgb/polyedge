@@ -2,7 +2,6 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import json
 import os
-import re
 import urllib.request
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ st.set_page_config(
 
 st_autorefresh(interval=60 * 1000, key="autorefresh")
 
-# ── CSS (tight single-line headers) ───────────────────────────────────────────
+# ── CSS (tight headers) ───────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -101,7 +100,7 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
 GAMMA_API         = "https://gamma-api.polymarket.com"
 TRADE_FILE        = "trades.jsonl"
 STARTING_BANKROLL = 10000.0
-POLYMARKET_BASE   = "https://polymarket.com/event"
+POLYMARKET_BASE   = "https://polymarket.com"
 
 @dataclass
 class TradeRecord:
@@ -121,7 +120,7 @@ class TradeRecord:
     outcome: Optional[float] = None
     dry_run: bool = True
 
-# ── API Helpers (kept simple & stable) ────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 def load_trades() -> list[TradeRecord]:
     if not os.path.exists(TRADE_FILE): return []
     records = []
@@ -140,39 +139,15 @@ def fetch_market_by_id(market_id: str) -> dict | None:
         req = urllib.request.Request(f"{GAMMA_API}/markets/{market_id}", headers={"User-Agent": "Mozilla/5.0"})
         data = json.loads(urllib.request.urlopen(req, timeout=10).read())
         if isinstance(data, dict):
-            data["_slug"] = data.get("slug") or data.get("conditionId", "unknown")
             return data
         return None
     except:
         return None
 
-def _fetch_market_by_question(question: str) -> dict | None:
-    q = question.lower()
-    asset = next((a for a in ["bitcoin","ethereum","solana","xrp","gold"] if a in q), None)
-    if not asset: return None
-    date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
-    if not date_m: return None
-    date_hint = date_m.group(0).replace(" ", "-")
-    ts = int(datetime.now(timezone.utc).timestamp() // 60)
-    for slug in [f"{asset}-above-on-{date_hint}", f"{asset}-price-above-on-{date_hint}"]:
-        try:
-            req = urllib.request.Request(f"{GAMMA_API}/events?slug={slug}&_={ts}", headers={"User-Agent": "Mozilla/5.0"})
-            data = json.loads(urllib.request.urlopen(req, timeout=8).read())
-            if isinstance(data, list):
-                for event in data:
-                    for m in event.get("markets", []):
-                        if m.get("question") == question:
-                            m["_slug"] = slug
-                            return m
-        except:
-            continue
-    return None
-
 def fetch_market(question: str, market_id: str = None) -> dict | None:
     if market_id:
-        m = fetch_market_by_id(market_id)
-        if m: return m
-    return _fetch_market_by_question(question)
+        return fetch_market_by_id(market_id)
+    return None  # we no longer need question-based lookup
 
 def get_yes_price(market: dict) -> float | None:
     try:
@@ -182,35 +157,12 @@ def get_yes_price(market: dict) -> float | None:
     except:
         return None
 
-def polymarket_url(market: dict | None, question: str) -> str:
-    """Stable version: Crypto works as before + targeted Gold fix"""
-    if market:
-        if market.get("_slug"):
-            return f"{POLYMARKET_BASE}/event/{market['_slug']}"
-        if market.get("slug"):
-            return f"{POLYMARKET_BASE}/event/{market['slug']}"
-
-    # Gold targeted fix (only this market)
-    q = question.lower()
-    if "gold" in q or "gc" in q:
-        if "6200" in q or "6,200" in question:
-            return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
-        return "https://polymarket.com/event/gc-over-under-jun-2026"
-
-    # Crypto fallback (original working version)
-    asset_map = {"bitcoin": "bitcoin", "btc": "bitcoin", "ethereum": "ethereum", 
-                 "eth": "ethereum", "solana": "solana", "xrp": "xrp"}
-    asset = next((a for a in asset_map if a in q), None)
-    if asset:
-        asset_slug = asset_map[asset]
-        date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
-        if date_m:
-            date_hint = date_m.group(0).replace(" ", "-").lower()
-            return f"{POLYMARKET_BASE}/event/{asset_slug}-above-on-{date_hint}"
-    
+def polymarket_url(market: dict | None, market_id: str) -> str:
+    """Simple and reliable: use direct market_id link"""
+    if market_id:
+        return f"https://polymarket.com/market/{market_id}"
     return "https://polymarket.com"
 
-# Rest of the functions (fmt_time_remaining, fmt_timestamp, etc.) remain the same as the tight version you liked
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
     if not end_date_str: return "—", "time-ok"
     try:
@@ -264,7 +216,7 @@ def identify_asset(question: str) -> str:
     if "gold" in q or "gc" in q: return "GOLD"
     return "OTHER"
 
-# ── Render (same tight version you liked) ─────────────────────────────────────
+# ── Render ─────────────────────────────────────────────────────────────────────
 def render():
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
@@ -398,7 +350,7 @@ def render():
             end_dt = m.get("endDate", "") if m else ""
             time_r, time_cls = fmt_time_remaining(end_dt)
             bought = fmt_timestamp(t.timestamp)
-            url = polymarket_url(m, t.question)
+            url = polymarket_url(m, t.market_id)
 
             cols = st.columns([c[2] for c in SORT_COLS])
             conf_label, conf_cls = confidence_tier(t.edge)
