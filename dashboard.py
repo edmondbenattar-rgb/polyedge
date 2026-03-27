@@ -19,7 +19,7 @@ st.set_page_config(
 
 st_autorefresh(interval=60 * 1000, key="autorefresh")
 
-# ── CSS (tight single-line headers) ───────────────────────────────────────────
+# ── CSS (tight single-line headers + colored metrics) ─────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -86,7 +86,7 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
     color: #303050; 
     letter-spacing: 0.6px; 
     text-transform: uppercase; 
-    padding: 2px 0;
+    padding: 4px 0;
     white-space: nowrap;
 }
 .stButton > button {
@@ -99,7 +99,7 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
 </style>
 """, unsafe_allow_html=True)
 
-# ── Constants & Data Class ─────────────────────────────────────────────────────
+# ── Constants ──────────────────────────────────────────────────────────────────
 GAMMA_API         = "https://gamma-api.polymarket.com"
 TRADE_FILE        = "trades.jsonl"
 STARTING_BANKROLL = 10000.0
@@ -123,7 +123,7 @@ class TradeRecord:
     outcome: Optional[float] = None
     dry_run: bool = True
 
-# ── API Helpers (unchanged) ───────────────────────────────────────────────────
+# ── API Helpers ────────────────────────────────────────────────────────────────
 def load_trades() -> list[TradeRecord]:
     if not os.path.exists(TRADE_FILE): return []
     records = []
@@ -174,7 +174,6 @@ def fetch_market(question: str, market_id: str = None) -> dict | None:
     if market_id:
         m = fetch_market_by_id(market_id)
         if m:
-            # Ensure _slug is set
             if not m.get("_slug") and m.get("slug"):
                 m["_slug"] = m["slug"]
             return m
@@ -191,44 +190,34 @@ def get_yes_price(market: dict) -> float | None:
 def polymarket_url(market: dict | None, question: str) -> str:
     """Robust URL builder: Prefer real slug from API, with smart fallbacks for Gold + Crypto."""
     if market:
-        # Best: Use the exact slug returned by Gamma API
         if market.get("_slug"):
-            slug = market["_slug"]
-            # Many markets are under /event/{slug}
-            return f"{POLYMARKET_BASE}/event/{slug}"
-        
-        # Some responses put slug under different keys
+            return f"{POLYMARKET_BASE}/event/{market['_slug']}"
         if market.get("slug"):
             return f"{POLYMARKET_BASE}/event/{market['slug']}"
-        
-        # Fallback to conditionId-based if needed (rare)
         if market.get("conditionId"):
             return f"https://polymarket.com/market/{market['conditionId']}"
 
-    # Smart manual fallback when API slug is missing
+    # Smart manual fallback
     q = question.lower()
     
-    # Gold handling (most common broken case)
+    # Gold specific handling
     if "gold" in q or "gc" in q:
         if "6200" in q or "6,200" in question:
             return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
-        return "https://polymarket.com/event/gc-over-under-jun-2026"  # parent event for all June strikes
+        return "https://polymarket.com/event/gc-over-under-jun-2026"
 
-    # Crypto fallback - improved regex to catch more patterns
+    # Crypto fallback
     asset_map = {"bitcoin": "bitcoin", "btc": "bitcoin", "ethereum": "ethereum", 
                  "eth": "ethereum", "solana": "solana", "xrp": "xrp"}
     asset = next((a for a in asset_map if a in q), None)
     if asset:
         asset_slug = asset_map[asset]
-        # Try to extract date + optional time
         date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
         if date_m:
             date_hint = date_m.group(0).replace(" ", "-").lower()
             return f"{POLYMARKET_BASE}/event/{asset_slug}-above-on-{date_hint}"
     
-    # Ultimate safe fallback
     return "https://polymarket.com"
-
 
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
     if not end_date_str: return "—", "time-ok"
@@ -355,7 +344,7 @@ def render():
             pct = amount / total_invested * 100 if total_invested > 0 else 0
             col.markdown(f'<div class="asset-card"><div class="asset-name">{asset}</div><div class="asset-amount">${amount:,.2f}</div><div style="font-size:10px;color:#404060">{pct:.0f}%</div></div>', unsafe_allow_html=True)
 
-    # Open Positions - Single-line headers
+    # Open Positions
     st.markdown(f'<div class="section-title">OPEN POSITIONS ({len(open_trades)})</div>', unsafe_allow_html=True)
 
     if not open_trades:
