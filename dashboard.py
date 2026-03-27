@@ -343,12 +343,16 @@ def get_yes_price(market: dict) -> float | None:
 def polymarket_url(market: dict | None, question: str, market_id: str = None) -> str:
     """
     Build Polymarket URL:
-    - Gold: https://polymarket.com/event/{event_slug}/{market_slug}
-    - Crypto: https://polymarket.com/event/{event_slug}/ (no market_slug needed)
+    - "above" markets: https://polymarket.com/event/{asset}-above-on-{date}/
+    - "less than"/"below" markets: https://polymarket.com/event/{asset}-price-on-{date}/
     """
     q = question.lower()
     
-    # GOLD MARKETS - Uses event_slug/market_slug structure
+    # Detect direction: "above" vs "less than"/"below"
+    is_above = "above" in q
+    is_below = "less than" in q or "below" in q
+    
+    # GOLD MARKETS
     if "gold" in q or "gc" in q:
         price_match = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
         if price_match:
@@ -358,7 +362,7 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
             return f"https://polymarket.com/event/{event_slug}/{market_slug}"
         return "https://polymarket.com"
     
-    # CRYPTO MARKETS - Uses only event_slug (with "on-")
+    # CRYPTO MARKETS
     asset_map = {
         "bitcoin": "bitcoin",
         "ethereum": "ethereum",
@@ -375,11 +379,19 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
                 day = date_m.group(2)
                 date_slug = f"{month}-{day}"
                 
-                # Crypto event_slug includes "on-"
-                event_slug = f"{display_name}-above-on-{date_slug}"
-                
-                # Just return event_slug, no market_slug needed
-                return f"https://polymarket.com/event/{event_slug}/"
+                # Choose URL format based on direction
+                if is_above:
+                    # "above" markets: bitcoin-above-on-march-30
+                    event_slug = f"{display_name}-above-on-{date_slug}"
+                    return f"https://polymarket.com/event/{event_slug}/"
+                elif is_below:
+                    # "less than"/"below" markets: bitcoin-price-on-march-30
+                    event_slug = f"{display_name}-price-on-{date_slug}"
+                    return f"https://polymarket.com/event/{event_slug}/"
+                else:
+                    # Fallback to above format
+                    event_slug = f"{display_name}-above-on-{date_slug}"
+                    return f"https://polymarket.com/event/{event_slug}/"
             break
     
     # Fallback to Polymarket home
@@ -596,20 +608,25 @@ def render():
         for t in sorted_trades:
             m = live_markets.get(t.market_id)
             
-            # Determine if this is a gold market
+            # Determine market type
             is_gold_market = "gold" in t.question.lower() or "gc" in t.question.lower()
             
-            # Get current price: try API first, then gold spot price for gold markets
+            # Get current price: try API first
             yes_cp = get_yes_price(m) if m else None
             
+            # If no API price for gold markets, fetch real spot price
             if yes_cp is None and is_gold_market:
-                # For gold markets, fetch real spot price and convert to probability
                 spot_price = get_gold_spot_price()
-                # Extract target price from question: "Will Gold (GC) settle over $5,600..."
                 target_m = re.search(r'\$?([\d,]+(?:\.\d+)?)', t.question)
                 if spot_price and target_m:
                     target_price = float(target_m.group(1).replace(",", ""))
-                    yes_cp = gold_price_to_market_price(spot_price, target_price, side="YES")
+                    # Determine if it's "above" or "below"
+                    is_above = "above" in t.question.lower()
+                    yes_cp = gold_price_to_market_price(spot_price, target_price, side="YES" if is_above else "NO")
+            
+            # If still no price, use entry price (p_market) as fallback for crypto
+            if yes_cp is None and not is_gold_market:
+                yes_cp = t.p_market
             
             # Convert to side-aware price
             cp = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp is not None else None)
