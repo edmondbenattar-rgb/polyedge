@@ -5,7 +5,7 @@ import os
 import re
 import urllib.request
 from datetime import datetime, timezone
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Optional
 from collections import defaultdict
 
@@ -19,7 +19,7 @@ st.set_page_config(
 
 st_autorefresh(interval=60 * 1000, key="autorefresh")
 
-# ── CSS (your original full CSS) ───────────────────────────────────────────────
+# ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -61,16 +61,19 @@ h1, h2, h3 { font-family: 'Syne', sans-serif; font-weight: 800; }
 .asset-name { font-family: 'Space Mono', monospace; font-size: 11px; color: #6060a0; letter-spacing: 2px; }
 .asset-amount { font-family: 'Space Mono', monospace; font-size: 16px; font-weight: 700; color: #ffb400; }
 
-.badge-yes { background: rgba(0,212,170,0.15); color: #00d4aa; border: 1px solid #00d4aa40; padding: 2px 10px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700; }
-.badge-no { background: rgba(255,68,102,0.15); color: #ff4466; border: 1px solid #ff446640; padding: 2px 10px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700; }
-.badge-high { background: rgba(0,212,100,0.15); color: #00d464; border: 1px solid #00d46440; padding: 2px 7px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 9px; font-weight: 700; }
-.badge-medium { background: rgba(255,200,0,0.15); color: #ffc800; border: 1px solid #ffc80040; padding: 2px 7px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 9px; font-weight: 700; }
-.badge-low { background: rgba(160,160,255,0.15); color: #a0a0ff; border: 1px solid #a0a0ff40; padding: 2px 7px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 9px; font-weight: 700; }
-.badge-won { background: rgba(0,212,170,0.1); color: #00d4aa; border: 1px solid #00d4aa30; padding: 2px 10px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; }
-.badge-lost { background: rgba(255,68,102,0.1); color: #ff4466; border: 1px solid #ff446630; padding: 2px 10px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; }
+.badge-yes, .badge-no, .badge-won, .badge-lost {
+    padding: 2px 10px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700;
+}
+.badge-yes { background: rgba(0,212,170,0.15); color: #00d4aa; border: 1px solid #00d4aa40; }
+.badge-no { background: rgba(255,68,102,0.15); color: #ff4466; border: 1px solid #ff446640; }
+.badge-won { background: rgba(0,212,170,0.1); color: #00d4aa; border: 1px solid #00d4aa30; }
+.badge-lost { background: rgba(255,68,102,0.1); color: #ff4466; border: 1px solid #ff446630; }
+.badge-high { background: rgba(0,212,100,0.15); color: #00d464; border: 1px solid #00d46440; padding: 2px 7px; border-radius: 20px; font-size: 9px; }
+.badge-medium { background: rgba(255,200,0,0.15); color: #ffc800; border: 1px solid #ffc80040; padding: 2px 7px; border-radius: 20px; font-size: 9px; }
+.badge-low { background: rgba(160,160,255,0.15); color: #a0a0ff; border: 1px solid #a0a0ff40; padding: 2px 7px; border-radius: 20px; font-size: 9px; }
 
-.mono { font-family: 'Space Mono', monospace; font-size: 12px; }
-.question-text { font-size: 12px; color: #b0b0d0; }
+.mono { font-family: 'Space Mono', monospace; font-size: 11.5px; }
+.question-text { font-size: 11.5px; color: #b0b0d0; line-height: 1.2; }
 .pnl-positive { color: #00d4aa; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 12px; }
 .pnl-negative { color: #ff4466; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 12px; }
 .pnl-neutral  { color: #6060a0; font-family: 'Space Mono', monospace; font-size: 12px; }
@@ -105,11 +108,11 @@ class TradeRecord:
     bet_size: float
     order_id: str
     avg_price: float
-    pnl: Optional[float]
-    outcome: Optional[float]
+    pnl: Optional[float] = None
+    outcome: Optional[float] = None
     dry_run: bool = True
 
-# ── Fixed Fetch Functions ──────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 def load_trades() -> list[TradeRecord]:
     if not os.path.exists(TRADE_FILE):
         return []
@@ -126,7 +129,6 @@ def load_trades() -> list[TradeRecord]:
 
 
 def fetch_market_by_id(market_id: str) -> dict | None:
-    """Correct Polymarket Gamma API endpoint for single market"""
     try:
         req = urllib.request.Request(
             f"{GAMMA_API}/markets/{market_id}",
@@ -142,7 +144,6 @@ def fetch_market_by_id(market_id: str) -> dict | None:
 
 
 def _fetch_market_by_question(question: str) -> dict | None:
-    """Fallback slug logic (original behavior)"""
     q = question.lower()
     asset = next((a for a in ["bitcoin", "ethereum", "solana", "xrp", "gold"] if a in q), None)
     if not asset:
@@ -171,7 +172,6 @@ def _fetch_market_by_question(question: str) -> dict | None:
 
 
 def fetch_market(question: str, market_id: str = None) -> dict | None:
-    """Main function: prefer market_id (fixes Gold), fallback to slug"""
     if market_id:
         m = fetch_market_by_id(market_id)
         if m:
@@ -200,30 +200,26 @@ def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
         return "—", "time-ok"
     try:
         end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        delta = end_dt - now
+        delta = end_dt - datetime.now(timezone.utc)
         if delta.total_seconds() < 0:
             return "Expired", "time-urgent"
         hours = delta.total_seconds() / 3600
         if hours < 1:
-            mins = int(delta.total_seconds() / 60)
-            return f"{mins}m", "time-urgent"
+            return f"{int(delta.total_seconds()/60)}m", "time-urgent"
         elif hours < 6:
             return f"{hours:.1f}h", "time-urgent"
         elif hours < 24:
             return f"{hours:.0f}h", "time-soon"
         else:
-            days = hours / 24
-            return f"{days:.1f}d", "time-ok"
+            return f"{hours/24:.1f}d", "time-ok"
     except Exception:
         return "—", "time-ok"
 
 
 def fmt_timestamp(ts: str) -> str:
     try:
-        dt = datetime.fromisoformat(ts)
-        return dt.strftime("%m/%d %H:%M")
-    except Exception:
+        return datetime.fromisoformat(ts).strftime("%m/%d %H:%M")
+    except:
         return "—"
 
 
@@ -252,12 +248,9 @@ def pnl_cls(v: float) -> str:
 
 
 def confidence_tier(edge: float) -> tuple[str, str]:
-    if edge >= 0.30:
-        return "HIGH", "badge-high"
-    elif edge >= 0.18:
-        return "MED", "badge-medium"
-    else:
-        return "LOW", "badge-low"
+    if edge >= 0.30: return "HIGH", "badge-high"
+    elif edge >= 0.18: return "MED", "badge-medium"
+    else: return "LOW", "badge-low"
 
 
 def fmt(v: float) -> str:
@@ -274,7 +267,7 @@ def identify_asset(question: str) -> str:
     return "OTHER"
 
 
-# ── Main Render ────────────────────────────────────────────────────────────────
+# ── Render ─────────────────────────────────────────────────────────────────────
 def render():
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
@@ -283,10 +276,10 @@ def render():
     open_trades = [t for t in trades if t.outcome is None]
     resolved = sorted([t for t in trades if t.outcome is not None], key=lambda x: x.timestamp, reverse=True)
 
-    # Live market data - FIXED: uses correct /markets/{id} endpoint
+    # Live data
     live_markets = {}
     for t in open_trades:
-        m = fetch_market(t.question, market_id=t.market_id)
+        m = fetch_market(t.question, t.market_id)
         if m:
             live_markets[t.market_id] = m
 
@@ -298,7 +291,7 @@ def render():
     bankroll = STARTING_BANKROLL + total_realised
     cash_left = STARTING_BANKROLL - total_invested
     wins = sum(1 for t in resolved if (t.pnl or 0) > 0)
-    losses = sum(1 for t in resolved if (t.pnl or 0) <= 0)
+    losses = len(resolved) - wins
     win_rate = f"{wins/(wins+losses)*100:.0f}%" if (wins + losses) > 0 else "—"
     pnl_pct = f"{(total_pnl/total_invested*100):+.1f}%" if total_invested > 0 else "—"
 
@@ -306,8 +299,7 @@ def render():
     last_scan = "—"
     if last_trade_ts:
         try:
-            lt = datetime.fromisoformat(last_trade_ts)
-            age_mins = int((now - lt).total_seconds() / 60)
+            age_mins = int((now - datetime.fromisoformat(last_trade_ts)).total_seconds() / 60)
             last_scan = f"{age_mins}m ago" if age_mins < 60 else f"{age_mins//60}h ago"
         except:
             pass
@@ -320,18 +312,14 @@ def render():
     with c2:
         st.markdown('<span class="dry-run-badge">DRY RUN</span>', unsafe_allow_html=True)
     with c3:
-        st.markdown(f"<p style='color:#303050;font-family:Space Mono,monospace;font-size:11px;text-align:right'>{now_str}<br><span style='color:#202040'>Last trade: {last_scan}</span></p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:#303050;font-family:Space Mono,monospace;font-size:11px;text-align:right'>{now_str}<br><span style='color:#202040'>Last: {last_scan}</span></p>", unsafe_allow_html=True)
 
     st.markdown("---")
 
     # Metrics
     cols = st.columns(8)
     def metric(col, label, value, css="neutral"):
-        col.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label">{label}</div>
-            <div class="metric-value {css}">{value}</div>
-        </div>""", unsafe_allow_html=True)
+        col.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value {css}">{value}</div></div>', unsafe_allow_html=True)
 
     metric(cols[0], "Bankroll", f"${bankroll:,.2f}")
     metric(cols[1], "Cash Available", f"${cash_left:,.2f}", "positive" if cash_left > 500 else "warning")
@@ -340,7 +328,7 @@ def render():
     metric(cols[4], "Total PnL", fmt(total_pnl), "positive" if total_pnl >= 0 else "negative")
     metric(cols[5], "Realised PnL", fmt(total_realised), "positive" if total_realised >= 0 else "negative")
     metric(cols[6], "Unrealised PnL", fmt(total_unrealised), "positive" if total_unrealised >= 0 else "negative")
-    metric(cols[7], "Win Rate", win_rate, "positive" if wins > losses else ("negative" if losses > wins else "neutral"))
+    metric(cols[7], "Win Rate", win_rate, "positive" if wins > losses else "negative")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -350,32 +338,63 @@ def render():
         by_asset = defaultdict(float)
         for t in open_trades:
             by_asset[identify_asset(t.question)] += t.bet_size
-
         acols = st.columns(len(by_asset))
         for col, (asset, amount) in zip(acols, sorted(by_asset.items())):
             pct = amount / total_invested * 100 if total_invested > 0 else 0
-            col.markdown(f"""
-            <div class="asset-card">
-                <div class="asset-name">{asset}</div>
-                <div class="asset-amount">${amount:,.2f}</div>
-                <div style="font-family:Space Mono,monospace;font-size:10px;color:#404060">{pct:.0f}%</div>
-            </div>""", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+            col.markdown(f'<div class="asset-card"><div class="asset-name">{asset}</div><div class="asset-amount">${amount:,.2f}</div><div style="font-size:10px;color:#404060">{pct:.0f}%</div></div>', unsafe_allow_html=True)
 
-    # Open Positions
+    # Open Positions - FULLY SORTABLE
     st.markdown(f'<div class="section-title">Open Positions ({len(open_trades)})</div>', unsafe_allow_html=True)
 
     if not open_trades:
         st.markdown('<div class="empty-state">No open positions</div>', unsafe_allow_html=True)
     else:
-        # Sorting (kept simple - you can expand later)
-        sorted_trades = sorted(open_trades, key=lambda t: t.timestamp, reverse=True)
+        if "sort_col" not in st.session_state:
+            st.session_state.sort_col = "closes_in"
+            st.session_state.sort_asc = True
 
-        # Table headers
-        hcols = st.columns([0.6, 0.6, 0.7, 0.7, 0.8, 0.7, 0.9, 0.7, 3.5, 0.9, 0.8, 0.4, 0.4])
-        headers = ["Side", "Conf.", "Stake", "Entry", "Break-even", "Current", "Unreal. PnL", "PnL %", "Market", "Bought", "Closes In", "⏱", "🔗"]
-        for c, h in zip(hcols, headers):
-            c.markdown(f'<p class="col-header">{h}</p>', unsafe_allow_html=True)
+        def sort_key(t):
+            m = live_markets.get(t.market_id)
+            yes_cp = get_yes_price(m) if m else None
+            cp = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp else None)
+            unr = calc_unrealised(t, yes_cp)
+            col = st.session_state.sort_col
+            if col == "side": return t.side
+            if col == "conf": return t.edge
+            if col == "stake": return t.bet_size
+            if col == "entry": return t.avg_price or 0
+            if col == "current": return cp or 0
+            if col == "pnl": return unr
+            if col == "pnlpct": return unr / t.bet_size if t.bet_size else 0
+            if col == "market": return t.question
+            if col == "bought": return t.timestamp
+            if col == "closes_in":
+                return m.get("endDate", "9999") if m else "9999"
+            return ""
+
+        sorted_trades = sorted(open_trades, key=sort_key, reverse=not st.session_state.sort_asc)
+
+        SORT_COLS = [
+            ("side", "Side", 0.55), ("conf", "Conf", 0.55), ("stake", "Stake", 0.7),
+            ("entry", "Entry", 0.65), (None, "BE", 0.65), ("current", "Current", 0.65),
+            ("pnl", "Unreal PnL", 0.85), ("pnlpct", "PnL%", 0.65), ("market", "Market", 4.2),
+            ("bought", "Bought", 0.85), ("closes_in", "Closes In", 0.75), (None, "⏱", 0.4), (None, "🔗", 0.4)
+        ]
+
+        hcols = st.columns([c[2] for c in SORT_COLS])
+        for widget, (key, label, _) in zip(hcols, SORT_COLS):
+            if key:
+                active = st.session_state.sort_col == key
+                arrow = " ↑" if active and st.session_state.sort_asc else " ↓" if active else ""
+                if widget.button(f"{label}{arrow}", key=f"sort_{key}", use_container_width=True):
+                    if st.session_state.sort_col == key:
+                        st.session_state.sort_asc = not st.session_state.sort_asc
+                    else:
+                        st.session_state.sort_col = key
+                        st.session_state.sort_asc = True
+                    st.rerun()
+            else:
+                widget.markdown(f'<p class="col-header">{label}</p>', unsafe_allow_html=True)
 
         for t in sorted_trades:
             m = live_markets.get(t.market_id)
@@ -389,7 +408,7 @@ def render():
             bought = fmt_timestamp(t.timestamp)
             url = polymarket_url(m, t.question)
 
-            cols = st.columns([0.6, 0.6, 0.7, 0.7, 0.8, 0.7, 0.9, 0.7, 3.5, 0.9, 0.8, 0.4, 0.4])
+            cols = st.columns([c[2] for c in SORT_COLS])
             conf_label, conf_cls = confidence_tier(t.edge)
 
             cols[0].markdown(f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span>', unsafe_allow_html=True)
@@ -399,22 +418,38 @@ def render():
             cols[4].markdown(f'<span class="mono" style="color:#8080c0">{be}</span>', unsafe_allow_html=True)
             cols[5].markdown(f'<span class="mono">{cp:.3f}</span>' if cp is not None else '<span class="mono" style="color:#404060">—</span>', unsafe_allow_html=True)
             cols[6].markdown(f'<span class="{pnl_cls(unr)}">{fmt(unr)}</span>', unsafe_allow_html=True)
-            pnl_pct_str = f"{'+' if unr >= 0 else ''}{unr / t.bet_size * 100:.1f}%" if t.bet_size > 0 else "—"
+            pnl_pct_str = f"{'+' if unr >= 0 else ''}{unr/t.bet_size*100:.1f}%" if t.bet_size > 0 else "—"
             cols[7].markdown(f'<span class="{pnl_cls(unr)}">{pnl_pct_str}</span>', unsafe_allow_html=True)
             cols[8].markdown(f'<span class="question-text">{t.question}</span>', unsafe_allow_html=True)
-            cols[9].markdown(f'<span class="mono" style="font-size:10px;color:#404060">{bought}</span>', unsafe_allow_html=True)
-            cols[10].markdown(f'<span class="mono" style="font-size:10px;color:#404060">{time_r}</span>', unsafe_allow_html=True)
+            cols[9].markdown(f'<span class="mono">{bought}</span>', unsafe_allow_html=True)
+            cols[10].markdown(f'<span class="mono" style="color:#404060">{time_r}</span>', unsafe_allow_html=True)
             cols[11].markdown(f'<span class="{time_cls}">{time_r}</span>', unsafe_allow_html=True)
             cols[12].markdown(f'<a href="{url}" target="_blank" class="link-btn">↗</a>', unsafe_allow_html=True)
 
-    # Resolved section (kept minimal)
+    # Resolved Trades - Full Table
     st.markdown(f'<div class="section-title">Resolved Trades ({len(resolved)})</div>', unsafe_allow_html=True)
-    if resolved:
-        # ... you can keep your original resolved table here if you want, or leave minimal for now
-        st.write("Resolved trades table coming soon (add your original code if needed)")
+    if not resolved:
+        st.markdown('<div class="empty-state">No resolved trades yet</div>', unsafe_allow_html=True)
+    else:
+        hcols = st.columns([0.6, 0.7, 0.7, 0.8, 0.7, 4.0, 0.9])
+        for c, h in zip(hcols, ["Side", "Stake", "Result", "PnL", "PnL%", "Market", "Date"]):
+            c.markdown(f'<p class="col-header">{h}</p>', unsafe_allow_html=True)
+
+        for t in resolved:
+            won = (t.pnl or 0) > 0
+            pnl_pct_t = f"{((t.pnl or 0)/t.bet_size*100):+.0f}%" if t.bet_size > 0 else "—"
+            cols = st.columns([0.6, 0.7, 0.7, 0.8, 0.7, 4.0, 0.9])
+            conf_label, conf_cls = confidence_tier(t.edge)
+            cols[0].markdown(f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> <span class="{conf_cls}">{conf_label}</span>', unsafe_allow_html=True)
+            cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>', unsafe_allow_html=True)
+            cols[2].markdown(f'<span class="badge-{"won" if won else "lost"}">{"WON ✓" if won else "LOST ✗"}</span>', unsafe_allow_html=True)
+            cols[3].markdown(f'<span class="{pnl_cls(t.pnl or 0)}">{fmt(t.pnl or 0)}</span>', unsafe_allow_html=True)
+            cols[4].markdown(f'<span class="{pnl_cls(t.pnl or 0)}">{pnl_pct_t}</span>', unsafe_allow_html=True)
+            cols[5].markdown(f'<span class="question-text">{t.question}</span>', unsafe_allow_html=True)
+            cols[6].markdown(f'<span class="mono">{fmt_timestamp(t.timestamp)}</span>', unsafe_allow_html=True)
 
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center;font-family:Space Mono,monospace;font-size:10px;color:#202035'>{len(open_trades)} open · {len(resolved)} resolved · Starting bankroll ${STARTING_BANKROLL:,.2f}</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center;font-family:Space Mono,monospace;font-size:10px;color:#202035'>{len(open_trades)} open · {len(resolved)} resolved · Bankroll ${STARTING_BANKROLL:,.2f}</p>", unsafe_allow_html=True)
 
 
 render()
