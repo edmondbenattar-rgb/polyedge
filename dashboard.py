@@ -190,35 +190,52 @@ def get_yes_price(market: dict) -> float | None:
         return None
 
 def polymarket_url(market: dict | None, question: str) -> str:
-    """Robust URL builder: Prefer real slug from API, with smart fallbacks for Gold + Crypto."""
-    if market:
-        if market.get("_slug"):
-            return f"{POLYMARKET_BASE}/event/{market['_slug']}"
-        if market.get("slug"):
-            return f"{POLYMARKET_BASE}/event/{market['slug']}"
-        if market.get("conditionId"):
-            return f"https://polymarket.com/market/{market['conditionId']}"
+    """Robust URL builder: Direct question parsing + API slug fallback."""
+    if market and market.get("_slug"):
+        return f"{POLYMARKET_BASE}/{market['_slug']}"
+    if market and market.get("slug"):
+        return f"{POLYMARKET_BASE}/{market['slug']}"
+    if market and market.get("conditionId"):
+        return f"https://polymarket.com/market/{market['conditionId']}"
 
-    # Smart manual fallback
+    # Direct extraction from question text (works offline)
     q = question.lower()
     
-    # Gold specific handling
+    # Gold: extract price target from question
     if "gold" in q or "gc" in q:
-        if "6200" in q or "6,200" in question:
-            return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
-        return "https://polymarket.com/event/gc-over-under-jun-2026"
-
-    # Crypto fallback
-    asset_map = {"bitcoin": "bitcoin", "btc": "bitcoin", "ethereum": "ethereum", 
-                 "eth": "ethereum", "solana": "solana", "xrp": "xrp"}
-    asset = next((a for a in asset_map if a in q), None)
-    if asset:
-        asset_slug = asset_map[asset]
-        date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
-        if date_m:
-            date_hint = date_m.group(0).replace(" ", "-").lower()
-            market_slug = f"{asset_slug}-above-{date_hint}"
-            return f"{POLYMARKET_BASE}/event/{market_slug}/{market_slug}"
+        # "Will Gold (GC) settle over $5,600 on the final trading day of June 2026?"
+        price_match = re.search(r'\$?(\d{1,2},?\d{3,4})', question)
+        if price_match:
+            price = price_match.group(1).replace(",", "")
+            return f"{POLYMARKET_BASE}/gc-over-under-jun-2026/gc-above-{price}-jun-2026"
+        return f"{POLYMARKET_BASE}/gc-over-under-jun-2026"
+    
+    # Crypto: extract asset, direction, date, and target price
+    asset_map = {
+        "bitcoin": ("bitcoin", "btc"),
+        "ethereum": ("ethereum", "eth"),
+        "solana": ("solana", "sol"),
+        "xrp": ("xrp", "xrp"),
+    }
+    
+    for asset_name, (display_name, _) in asset_map.items():
+        if asset_name in q:
+            # Extract date: "march 24" → "march-24"
+            date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
+            if date_m:
+                month = date_m.group(1).lower()
+                day = date_m.group(2)
+                date_slug = f"{month}-{day}"
+                
+                # Extract price target if present: "$45,000" → "45000"
+                price_m = re.search(r'\$?([\d,]+(?:\.\d+)?)', q)
+                if price_m:
+                    price = price_m.group(1).replace(",", "")
+                    market_slug = f"{display_name}-above-{price}-{date_slug}"
+                else:
+                    market_slug = f"{display_name}-above-{date_slug}"
+                
+                return f"{POLYMARKET_BASE}/{market_slug}/{market_slug}"
     
     return "https://polymarket.com"
 
@@ -235,6 +252,36 @@ def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
         else: return f"{hours/24:.1f}d", "time-ok"
     except:
         return "—", "time-ok"
+
+def extract_expiry_from_question(question: str) -> str | None:
+    """Extract ISO date from question text. Gold markets: 'June 2026' → '2026-06-30'"""
+    q = question.lower()
+    
+    # Month mapping
+    months = {
+        "january": 1, "february": 2, "march": 3, "april": 4,
+        "may": 5, "june": 6, "july": 7, "august": 8,
+        "september": 9, "october": 10, "november": 11, "december": 12
+    }
+    
+    # Try to find "Month Year" pattern (e.g., "June 2026")
+    date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})', q)
+    if date_m:
+        month = months[date_m.group(1)]
+        year = int(date_m.group(2))
+        # Last trading day of month (e.g., June 30)
+        last_day = 30 if month in [4, 6, 9, 11] else (29 if month == 2 else 31)
+        return f"{year}-{month:02d}-{last_day}T23:59:59Z"
+    
+    # Fallback: try "Month Day" pattern
+    date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
+    if date_m:
+        month = months[date_m.group(1)]
+        day = int(date_m.group(2))
+        year = datetime.now().year
+        return f"{year}-{month:02d}-{day:02d}T23:59:59Z"
+    
+    return None
 
 def fmt_timestamp(ts: str) -> str:
     try: return datetime.fromisoformat(ts).strftime("%m/%d %H:%M")
@@ -408,6 +455,9 @@ def render():
             entry = t.avg_price if getattr(t, 'avg_price', 0) > 0 else t.p_market
             be = breakeven_price(t)
             end_dt = m.get("endDate", "") if m else ""
+            # Fallback: extract date from question if API didn't provide endDate
+            if not end_dt:
+                end_dt = extract_expiry_from_question(t.question) or ""
             time_r, time_cls = fmt_time_remaining(end_dt)
             bought = fmt_timestamp(t.timestamp)
             url = polymarket_url(m, t.question)
