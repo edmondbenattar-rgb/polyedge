@@ -342,60 +342,40 @@ def get_yes_price(market: dict) -> float | None:
 
 def polymarket_url(market: dict | None, question: str, market_id: str = None) -> str:
     """
-    Build Polymarket URL using the correct slug-based structure.
-    Polymarket uses: https://polymarket.com/event/{event_slug}/{market_slug}
+    Build Polymarket URL: https://polymarket.com/event/{market_slug}/{market_slug}
     
-    Strategy:
-    1. If market object has slug, use it
-    2. If we have conditionId (market_id), fetch slug from API
-    3. Fallback to reconstructing from question text
+    SIMPLEST approach: Reconstruct slug from question text (this was working originally).
+    Only try API data if that fails.
     """
-    # Strategy 1: If market object has slug, use it directly
-    if market:
-        market_slug = market.get("slug")
-        if market_slug:
-            # Build event-level and market-level slugs
-            # Try to extract event slug from market slug, or use a derived version
-            event_slug = market.get("event_slug") or market_slug.rsplit("-", 1)[0]
-            return f"https://polymarket.com/event/{event_slug}/{market_slug}"
-    
-    # Strategy 2: If we have conditionId (market_id), fetch slug from API
-    if market_id and isinstance(market_id, str) and market_id.startswith("0x") and len(market_id) > 10:
-        slug = get_market_slug_from_api(market_id)
-        if slug:
-            # Use the market slug as both parts of the URL
-            # (event slug should ideally come from API, but market slug alone works for routing)
-            return f"https://polymarket.com/event/{slug}/{slug}"
-    
-    # Strategy 3: Fallback to question-based reconstruction
     q = question.lower()
     
-    # Gold: extract price target and construct slug-based URL
+    # GOLD MARKETS
     if "gold" in q or "gc" in q:
         price_match = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
         if price_match:
             price = price_match.group(1).replace(",", "")
             market_slug = f"gc-above-{price}-jun-2026"
-            event_slug = "gc-over-under-jun-2026"
-            return f"https://polymarket.com/event/{event_slug}/{market_slug}"
-        return "https://polymarket.com/event/gc-over-under-jun-2026"
+            return f"https://polymarket.com/event/{market_slug}/{market_slug}"
+        return "https://polymarket.com/event/gc-over-under-jun-2026/gc-over-under-jun-2026"
     
-    # Crypto: reconstruct slugs from question text
+    # CRYPTO MARKETS - Extract asset, price, date from question
     asset_map = {
-        "bitcoin": ("bitcoin", "btc"),
-        "ethereum": ("ethereum", "eth"),
-        "solana": ("solana", "sol"),
-        "xrp": ("xrp", "xrp"),
+        "bitcoin": "bitcoin",
+        "ethereum": "ethereum",
+        "solana": "solana",
+        "xrp": "xrp",
     }
     
-    for asset_name, (display_name, _) in asset_map.items():
+    for asset_name, display_name in asset_map.items():
         if asset_name in q:
+            # Extract date
             date_m = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})', q)
             if date_m:
                 month = date_m.group(1).lower()
                 day = date_m.group(2)
                 date_slug = f"{month}-{day}"
                 
+                # Extract price
                 price_m = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
                 if price_m:
                     price = price_m.group(1).replace(",", "")
@@ -403,10 +383,10 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
                 else:
                     market_slug = f"{display_name}-above-{date_slug}"
                 
-                # Build URL with BOTH event and market slug (they're the same for crypto)
                 return f"https://polymarket.com/event/{market_slug}/{market_slug}"
             break
     
+    # Fallback to Polymarket home
     return "https://polymarket.com"
 
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
