@@ -187,8 +187,9 @@ def get_yes_price(market: dict) -> float | None:
         return None
 
 def polymarket_url(market: dict | None, question: str) -> str:
-    """Robust: Prefer real slug from API. Smart fallbacks for Gold + Crypto."""
+    """Final robust version: Prefer real _slug from API. Smart fallbacks for Gold + Crypto."""
     if market:
+        # Primary: Use exact slug from API
         if market.get("_slug"):
             return f"{POLYMARKET_BASE}/event/{market['_slug']}"
         if market.get("slug"):
@@ -196,14 +197,14 @@ def polymarket_url(market: dict | None, question: str) -> str:
         if market.get("conditionId"):
             return f"https://polymarket.com/market/{market['conditionId']}"
 
-    # Gold specific
+    # Gold specific fallback (real observed slugs)
     q = question.lower()
     if "gold" in q or "gc" in q:
         if "6200" in q or "6,200" in question:
             return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
         return "https://polymarket.com/event/gc-over-under-jun-2026"
 
-    # Crypto fallback
+    # Crypto fallback with flexible date
     asset_map = {"bitcoin": "bitcoin", "btc": "bitcoin", "ethereum": "ethereum", 
                  "eth": "ethereum", "solana": "solana", "xrp": "xrp"}
     asset = next((a for a in asset_map if a in q), None)
@@ -214,6 +215,7 @@ def polymarket_url(market: dict | None, question: str) -> str:
             date_hint = date_m.group(0).replace(" ", "-").lower()
             return f"{POLYMARKET_BASE}/event/{asset_slug}-above-on-{date_hint}"
     
+    # Ultimate safe fallback
     return "https://polymarket.com"
 
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
@@ -269,7 +271,7 @@ def identify_asset(question: str) -> str:
     if "gold" in q or "gc" in q: return "GOLD"
     return "OTHER"
 
-# ── Render (unchanged from previous tight version) ─────────────────────────────
+# ── Render (tight version) ─────────────────────────────────────────────────────
 def render():
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
