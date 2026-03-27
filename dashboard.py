@@ -185,8 +185,27 @@ def get_yes_price(market: dict) -> float | None:
         return None
 
 def polymarket_url(market: dict | None, question: str) -> str:
+    """Fixed: Use real slug from API when available, with Gold-specific fallback."""
     if market and market.get("_slug"):
-        return f"{POLYMARKET_BASE}/{market['_slug']}"
+        # Use the actual slug returned by Gamma API (most reliable)
+        return f"{POLYMARKET_BASE}/event/{market['_slug']}"
+    
+    # Fallback logic with better Gold support
+    q = question.lower()
+    if "gold" in q or "gc" in q:
+        # Gold markets are under gc-over-under-jun-2026 or gc-hit-jun-2026
+        if "6200" in q or "6,200" in question:
+            return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
+        return "https://polymarket.com/event/gc-over-under-jun-2026"  # parent event
+    
+    # Original crypto fallback (kept for speed)
+    asset = next((a for a in ["bitcoin", "ethereum", "solana", "xrp"] if a in q), "")
+    date_m = re.search(r'(january|february|march|april|may|june|july|august|'
+                       r'september|october|november|december)\s+(\d{1,2})', q)
+    if asset and date_m:
+        date_hint = date_m.group(0).replace(" ", "-")
+        return f"{POLYMARKET_BASE}/{asset}-above-on-{date_hint}"
+    
     return "https://polymarket.com"
 
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
