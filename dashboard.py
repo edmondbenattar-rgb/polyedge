@@ -8,13 +8,25 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Optional
 from collections import defaultdict
-import yfinance as yf
+
+# Try to import yfinance, but don't crash if unavailable (Streamlit Cloud compatibility)
+try:
+    import yfinance as yf
+    HAS_YFINANCE = True
+except ImportError:
+    HAS_YFINANCE = False
 
 import yfinance as yf
 
 # ── Gold Price Helpers (for accurate current prices on gold markets) ─────────────
 def get_gold_spot_price() -> float | None:
-    """Fetch current gold spot price from Yahoo Finance (GC=F is COMEX Gold futures)."""
+    """
+    Fetch current gold spot price from Yahoo Finance (GC=F is COMEX Gold futures).
+    Returns None if yfinance unavailable or fetch fails.
+    """
+    if not HAS_YFINANCE:
+        return None
+    
     try:
         gold = yf.Ticker("GC=F")
         data = gold.history(period="1d")
