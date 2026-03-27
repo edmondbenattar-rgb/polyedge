@@ -658,14 +658,25 @@ def render():
     if not resolved:
         st.markdown('<div class="empty-state">No resolved trades yet</div>', unsafe_allow_html=True)
     else:
-        hcols = st.columns([0.6, 0.75, 0.75, 0.85, 0.7, 5.0, 0.95])
-        for c, h in zip(hcols, ["Side", "Stake", "Result", "PnL", "PnL%", "Market", "Date"]):
+        # Add "Date of Expiry" column
+        hcols = st.columns([0.6, 0.75, 0.75, 0.85, 0.7, 5.0, 0.95, 0.95])
+        for c, h in zip(hcols, ["Side", "Stake", "Result", "PnL", "PnL%", "Market", "Bought", "Closed"]):
             c.markdown(f'<p class="col-header">{h}</p>', unsafe_allow_html=True)
 
         for t in resolved:
             won = (t.pnl or 0) > 0
             pnl_pct_t = f"{((t.pnl or 0)/t.bet_size*100):+.0f}%" if t.bet_size > 0 else "—"
-            cols = st.columns([0.6, 0.75, 0.75, 0.85, 0.7, 5.0, 0.95])
+            
+            # Get market data to find expiry date
+            m = live_markets.get(t.market_id)
+            end_dt = m.get("endDate", "") if m else ""
+            # Fallback: extract expiry from question
+            if not end_dt:
+                end_dt = extract_expiry_from_question(t.question) or ""
+            # Format expiry date for display
+            expiry_display = fmt_timestamp(end_dt) if end_dt else "—"
+            
+            cols = st.columns([0.6, 0.75, 0.75, 0.85, 0.7, 5.0, 0.95, 0.95])
             conf_label, conf_cls = confidence_tier(t.edge)
             cols[0].markdown(f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> <span class="{conf_cls}">{conf_label}</span>', unsafe_allow_html=True)
             cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>', unsafe_allow_html=True)
@@ -674,6 +685,7 @@ def render():
             cols[4].markdown(f'<span class="{pnl_cls(t.pnl or 0)}">{pnl_pct_t}</span>', unsafe_allow_html=True)
             cols[5].markdown(f'<span class="question-text">{t.question}</span>', unsafe_allow_html=True)
             cols[6].markdown(f'<span class="mono">{fmt_timestamp(t.timestamp)}</span>', unsafe_allow_html=True)
+            cols[7].markdown(f'<span class="mono">{expiry_display}</span>', unsafe_allow_html=True)
 
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown(f"<p style='text-align:center;font-family:Space Mono,monospace;font-size:10px;color:#202035'>{len(open_trades)} open · {len(resolved)} resolved · Bankroll ${STARTING_BANKROLL:,.0f}</p>", unsafe_allow_html=True)
