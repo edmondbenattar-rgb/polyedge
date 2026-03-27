@@ -19,7 +19,7 @@ st.set_page_config(
 
 st_autorefresh(interval=60 * 1000, key="autorefresh")
 
-# ── CSS (tight single-line headers + colored metrics) ─────────────────────────
+# ── CSS (tight single-line headers) ───────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -41,7 +41,6 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
 .metric-value.positive { color: #00d4aa !important; }
 .metric-value.negative { color: #ff4466 !important; }
 .metric-value.neutral  { color: #e8e8f0 !important; }
-.metric-value.warning  { color: #ffb400 !important; }
 
 .section-title {
     font-family: 'Space Mono', monospace;
@@ -188,7 +187,7 @@ def get_yes_price(market: dict) -> float | None:
         return None
 
 def polymarket_url(market: dict | None, question: str) -> str:
-    """Robust URL builder: Prefer real slug from API, with smart fallbacks for Gold + Crypto."""
+    """Robust: Prefer real slug from API. Smart fallbacks for Gold + Crypto."""
     if market:
         if market.get("_slug"):
             return f"{POLYMARKET_BASE}/event/{market['_slug']}"
@@ -197,10 +196,8 @@ def polymarket_url(market: dict | None, question: str) -> str:
         if market.get("conditionId"):
             return f"https://polymarket.com/market/{market['conditionId']}"
 
-    # Smart manual fallback
+    # Gold specific
     q = question.lower()
-    
-    # Gold specific handling
     if "gold" in q or "gc" in q:
         if "6200" in q or "6,200" in question:
             return "https://polymarket.com/event/gc-over-under-jun-2026/gc-above-6200-jun-2026"
@@ -272,7 +269,7 @@ def identify_asset(question: str) -> str:
     if "gold" in q or "gc" in q: return "GOLD"
     return "OTHER"
 
-# ── Render ─────────────────────────────────────────────────────────────────────
+# ── Render (unchanged from previous tight version) ─────────────────────────────
 def render():
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
@@ -306,7 +303,6 @@ def render():
         except:
             pass
 
-    # Header + Metrics
     c1, c2, c3 = st.columns([3, 1, 2])
     with c1: 
         st.markdown("# PolyEdge")
