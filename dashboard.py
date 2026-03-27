@@ -19,7 +19,7 @@ st.set_page_config(
 
 st_autorefresh(interval=60 * 1000, key="autorefresh")
 
-# ── CSS (tighter + colored metrics) ───────────────────────────────────────────
+# ── CSS (tight single-line headers) ───────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -78,13 +78,23 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
 .link-btn { color: #6060c0; font-size: 11px; text-decoration: none; }
 .dry-run-badge { background: rgba(255,180,0,0.1); color: #ffb400; border: 1px solid #ffb40040; padding: 3px 12px; border-radius: 20px; font-size: 10.5px; }
 .empty-state { text-align: center; padding: 40px; font-size: 13px; color: #404060; }
+
+/* Tight single-line column headers */
 .col-header { 
     font-family: 'Space Mono', monospace; 
-    font-size: 9.6px; 
+    font-size: 9.4px; 
     color: #303050; 
-    letter-spacing: 0.8px; 
+    letter-spacing: 0.6px; 
     text-transform: uppercase; 
-    padding: 4px 0;
+    padding: 2px 0;
+    white-space: nowrap;
+}
+.stButton > button {
+    font-size: 9.4px !important;
+    padding: 4px 6px !important;
+    height: auto !important;
+    min-height: 28px !important;
+    white-space: nowrap;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -113,7 +123,7 @@ class TradeRecord:
     outcome: Optional[float] = None
     dry_run: bool = True
 
-# ── API Helpers (Gold-safe) ────────────────────────────────────────────────────
+# ── API Helpers (unchanged) ───────────────────────────────────────────────────
 def load_trades() -> list[TradeRecord]:
     if not os.path.exists(TRADE_FILE): return []
     records = []
@@ -266,7 +276,7 @@ def render():
         except:
             pass
 
-    # Header + Metrics with proper coloring
+    # Header + Metrics
     c1, c2, c3 = st.columns([3, 1, 2])
     with c1: 
         st.markdown("# PolyEdge")
@@ -278,9 +288,8 @@ def render():
 
     cols = st.columns(8)
     def metric(col, label, value, is_positive=None):
-        if is_positive is None:
-            css = "neutral"
-        else:
+        css = "neutral"
+        if is_positive is not None:
             css = "positive" if is_positive else "negative"
         col.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value {css}">{value}</div></div>', unsafe_allow_html=True)
 
@@ -305,7 +314,7 @@ def render():
             pct = amount / total_invested * 100 if total_invested > 0 else 0
             col.markdown(f'<div class="asset-card"><div class="asset-name">{asset}</div><div class="asset-amount">${amount:,.2f}</div><div style="font-size:10px;color:#404060">{pct:.0f}%</div></div>', unsafe_allow_html=True)
 
-    # Open Positions
+    # Open Positions - Single-line headers
     st.markdown(f'<div class="section-title">OPEN POSITIONS ({len(open_trades)})</div>', unsafe_allow_html=True)
 
     if not open_trades:
@@ -337,10 +346,10 @@ def render():
         sorted_trades = sorted(open_trades, key=sort_key, reverse=not st.session_state.sort_asc)
 
         SORT_COLS = [
-            ("side", "Side", 0.55), ("conf", "Conf", 0.55), ("stake", "Stake", 0.75),
-            ("entry", "Entry", 0.65), (None, "BE", 0.65), ("current", "Current", 0.65),
-            ("pnl", "Unreal PnL", 0.9), ("pnlpct", "PnL%", 0.7), ("market", "Market", 4.8),
-            ("bought", "Bought", 0.9), ("closes_in", "Closes In", 0.75), (None, "🔗", 0.4)
+            ("side", "Side", 0.52), ("conf", "Conf", 0.52), ("stake", "Stake", 0.72),
+            ("entry", "Entry", 0.62), (None, "BE", 0.62), ("current", "Current", 0.62),
+            ("pnl", "Unreal PnL", 0.88), ("pnlpct", "PnL%", 0.68), ("market", "Market", 5.0),
+            ("bought", "Bought", 0.88), ("closes_in", "Closes In", 0.72), (None, "🔗", 0.38)
         ]
 
         hcols = st.columns([c[2] for c in SORT_COLS])
