@@ -19,7 +19,7 @@ st.set_page_config(
 
 st_autorefresh(interval=60 * 1000, key="autorefresh")
 
-# ── CSS (tighter headers + colored metrics) ───────────────────────────────────
+# ── CSS (tighter + colored metrics) ───────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -37,6 +37,11 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
 }
 .metric-label { font-family: 'Space Mono', monospace; font-size: 9.2px; letter-spacing: 1.8px; text-transform: uppercase; color: #6060a0; margin-bottom: 6px; }
 .metric-value { font-family: 'Space Mono', monospace; font-size: 20px; font-weight: 700; }
+
+.metric-value.positive { color: #00d4aa !important; }
+.metric-value.negative { color: #ff4466 !important; }
+.metric-value.neutral  { color: #e8e8f0 !important; }
+.metric-value.warning  { color: #ffb400 !important; }
 
 .section-title {
     font-family: 'Space Mono', monospace;
@@ -261,7 +266,7 @@ def render():
         except:
             pass
 
-    # Header + Metrics with color
+    # Header + Metrics with proper coloring
     c1, c2, c3 = st.columns([3, 1, 2])
     with c1: 
         st.markdown("# PolyEdge")
@@ -272,17 +277,21 @@ def render():
     st.markdown("---")
 
     cols = st.columns(8)
-    def metric(col, label, value, css="neutral"):
+    def metric(col, label, value, is_positive=None):
+        if is_positive is None:
+            css = "neutral"
+        else:
+            css = "positive" if is_positive else "negative"
         col.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value {css}">{value}</div></div>', unsafe_allow_html=True)
 
     metric(cols[0], "BANKROLL", f"${bankroll:,.1f}")
-    metric(cols[1], "CASH AVAILABLE", f"${cash_left:,.1f}", "positive" if cash_left > 500 else "warning")
-    metric(cols[2], "CAPITAL AT RISK", f"${total_invested:,.2f}", "warning" if total_invested > 0 else "neutral")
-    metric(cols[3], "PNL % ON RISK", pnl_pct, "positive" if total_pnl >= 0 else "negative")
-    metric(cols[4], "TOTAL PNL", fmt(total_pnl), "positive" if total_pnl >= 0 else "negative")
-    metric(cols[5], "REALISED PNL", fmt(total_realised), "positive" if total_realised >= 0 else "negative")
-    metric(cols[6], "UNREALISED PNL", fmt(total_unrealised), "positive" if total_unrealised >= 0 else "negative")
-    metric(cols[7], "WIN RATE", win_rate, "positive" if wins > losses else "negative")
+    metric(cols[1], "CASH AVAILABLE", f"${cash_left:,.1f}", cash_left > 500)
+    metric(cols[2], "CAPITAL AT RISK", f"${total_invested:,.2f}")
+    metric(cols[3], "PNL % ON RISK", pnl_pct, total_pnl >= 0)
+    metric(cols[4], "TOTAL PNL", fmt(total_pnl), total_pnl >= 0)
+    metric(cols[5], "REALISED PNL", fmt(total_realised), total_realised >= 0)
+    metric(cols[6], "UNREALISED PNL", fmt(total_unrealised), total_unrealised >= 0)
+    metric(cols[7], "WIN RATE", win_rate, wins > losses)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -296,7 +305,7 @@ def render():
             pct = amount / total_invested * 100 if total_invested > 0 else 0
             col.markdown(f'<div class="asset-card"><div class="asset-name">{asset}</div><div class="asset-amount">${amount:,.2f}</div><div style="font-size:10px;color:#404060">{pct:.0f}%</div></div>', unsafe_allow_html=True)
 
-    # Open Positions - Tight headers + Closes In sortable
+    # Open Positions
     st.markdown(f'<div class="section-title">OPEN POSITIONS ({len(open_trades)})</div>', unsafe_allow_html=True)
 
     if not open_trades:
