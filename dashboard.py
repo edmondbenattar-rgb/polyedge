@@ -68,6 +68,32 @@ def gold_price_to_market_price(spot_price: float, target_price: float, side: str
     except Exception:
         return None
 
+def get_market_slug_from_api(condition_id: str) -> str | None:
+    """
+    Fetch the market slug from Gamma API using conditionId.
+    This allows us to build correct Polymarket URLs even if bot.py didn't store the slug.
+    Returns the market slug needed to construct: /event/{event_slug}/{market_slug}
+    """
+    if not condition_id or not isinstance(condition_id, str) or not condition_id.startswith("0x"):
+        return None
+    
+    try:
+        # Query Gamma API to find the market by conditionId
+        req = urllib.request.Request(
+            f"{GAMMA_API}/markets?condition_id={condition_id}",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        data = json.loads(urllib.request.urlopen(req, timeout=5).read())
+        
+        if isinstance(data, list) and len(data) > 0:
+            market = data[0]
+            if market.get("slug"):
+                return market["slug"]
+    except Exception:
+        pass
+    
+    return None
+
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="PolyEdge Dashboard",
@@ -316,50 +342,45 @@ def get_yes_price(market: dict) -> float | None:
 
 def polymarket_url(market: dict | None, question: str, market_id: str = None) -> str:
     """
-    Build Polymarket URL using market_id (conditionId) as primary source.
-    The market_id is the on-chain unique identifier for each specific market.
+    Build Polymarket URL using the correct slug-based structure.
+    Polymarket uses: https://polymarket.com/event/{event_slug}/{market_slug}
     
-    Valid market_id: long hex string like 0x0cc187e7661fca5014bff69d9b520570a22d262bf6bc62a57ebfe40f5ea7ad9b
-    Invalid market_id: empty string, None, "unknown", or too short
+    Strategy:
+    1. If market object has slug, use it
+    2. If we have conditionId (market_id), fetch slug from API
+    3. Fallback to reconstructing from question text
     """
-    # Validate market_id: must be non-empty hex string starting with 0x
-    is_valid_market_id = (
-        market_id and 
-        isinstance(market_id, str) and 
-        market_id.startswith("0x") and 
-        len(market_id) > 10
-    )
-    
-    # Use market_id if valid
-    if is_valid_market_id:
-        return f"https://polymarket.com/market/{market_id}"
-    
-    # Fallback: if no valid market_id but we have market object, try to extract conditionId or slug
+    # Strategy 1: If market object has slug, use it directly
     if market:
-        # Try conditionId from API response
-        if market.get("conditionId"):
-            cond_id = market.get("conditionId")
-            if cond_id and isinstance(cond_id, str) and cond_id.startswith("0x") and len(cond_id) > 10:
-                return f"https://polymarket.com/market/{cond_id}"
-        
-        # Try slug
-        if market.get("_slug"):
-            return f"{POLYMARKET_BASE}/{market['_slug']}"
-        if market.get("slug"):
-            return f"{POLYMARKET_BASE}/{market['slug']}"
-
-    # Last resort: Fallback to question-based extraction (less accurate but works offline)
+        market_slug = market.get("slug")
+        if market_slug:
+            # Build event-level and market-level slugs
+            # Try to extract event slug from market slug, or use a derived version
+            event_slug = market.get("event_slug") or market_slug.rsplit("-", 1)[0]
+            return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+    
+    # Strategy 2: If we have conditionId (market_id), fetch slug from API
+    if market_id and isinstance(market_id, str) and market_id.startswith("0x") and len(market_id) > 10:
+        slug = get_market_slug_from_api(market_id)
+        if slug:
+            # Use the market slug as both parts of the URL
+            # (event slug should ideally come from API, but market slug alone works for routing)
+            return f"https://polymarket.com/event/{slug}/{slug}"
+    
+    # Strategy 3: Fallback to question-based reconstruction
     q = question.lower()
     
-    # Gold: extract price target from question
+    # Gold: extract price target and construct slug-based URL
     if "gold" in q or "gc" in q:
         price_match = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
         if price_match:
             price = price_match.group(1).replace(",", "")
-            return f"{POLYMARKET_BASE}/gc-over-under-jun-2026/gc-above-{price}-jun-2026"
-        return f"{POLYMARKET_BASE}/gc-over-under-jun-2026"
+            market_slug = f"gc-above-{price}-jun-2026"
+            event_slug = "gc-over-under-jun-2026"
+            return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+        return "https://polymarket.com/event/gc-over-under-jun-2026"
     
-    # Crypto: extract asset, direction, date, and target price
+    # Crypto: reconstruct slugs from question text
     asset_map = {
         "bitcoin": ("bitcoin", "btc"),
         "ethereum": ("ethereum", "eth"),
@@ -378,11 +399,13 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
                 price_m = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
                 if price_m:
                     price = price_m.group(1).replace(",", "")
-                    market_slug = f"{display_name}-above-{price}-{date_slug}"
+                    market_slug = f"{display_name}-above-{price}-on-{date_slug}"
                 else:
-                    market_slug = f"{display_name}-above-{date_slug}"
+                    market_slug = f"{display_name}-above-on-{date_slug}"
                 
-                return f"{POLYMARKET_BASE}/{market_slug}/{market_slug}"
+                # Event slug is the base (without price)
+                event_slug = f"{display_name}-above-on-{date_slug}"
+                return f"https://polymarket.com/event/{event_slug}/{market_slug}"
             break
     
     return "https://polymarket.com"
