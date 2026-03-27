@@ -188,9 +188,11 @@ def fetch_market_by_id(market_id: str) -> dict | None:
         data = json.loads(urllib.request.urlopen(req, timeout=10).read())
         if isinstance(data, dict):
             data["_slug"] = data.get("slug") or data.get("conditionId", "unknown")
+            data["_source"] = "market_id"
             return data
         return None
-    except:
+    except Exception as e:
+        # Silently fail, will try question-based fallback
         return None
 
 def _fetch_market_by_question(question: str) -> dict | None:
@@ -203,7 +205,13 @@ def _fetch_market_by_question(question: str) -> dict | None:
     if not date_m: return None
     date_hint = date_m.group(0).replace(" ", "-").lower()
     ts = int(datetime.now(timezone.utc).timestamp() // 60)
-    for slug in [f"{asset}-above-on-{date_hint}", f"{asset}-price-above-on-{date_hint}"]:
+    
+    # Build slug list with variations for gold
+    slugs = [f"{asset}-above-on-{date_hint}", f"{asset}-price-above-on-{date_hint}"]
+    if asset == "gold":
+        slugs = [f"gc-above-on-{date_hint}", f"gc-above-{date_hint}", f"gold-above-on-{date_hint}"] + slugs
+    
+    for slug in slugs:
         try:
             req = urllib.request.Request(f"{GAMMA_API}/events?slug={slug}&_={ts}", headers={"User-Agent": "Mozilla/5.0"})
             data = json.loads(urllib.request.urlopen(req, timeout=8).read())
@@ -212,12 +220,14 @@ def _fetch_market_by_question(question: str) -> dict | None:
                     for m in event.get("markets", []):
                         if m.get("question") == question:
                             m["_slug"] = slug
+                            m["_source"] = "question"
                             return m
         except:
             continue
     return None
 
 def fetch_market(question: str, market_id: str = None) -> dict | None:
+    """Fetch market data, trying market_id first, then question-based lookup."""
     if market_id:
         m = fetch_market_by_id(market_id)
         if m:
@@ -227,12 +237,23 @@ def fetch_market(question: str, market_id: str = None) -> dict | None:
     return _fetch_market_by_question(question)
 
 def get_yes_price(market: dict) -> float | None:
+    """Get YES price from market data, with fallback to cached price."""
+    if market is None:
+        return None
     try:
         prices = market.get("outcomePrices") or []
-        if isinstance(prices, str): prices = json.loads(prices)
-        return float(prices[0]) if prices else None
+        if isinstance(prices, str): 
+            prices = json.loads(prices)
+        if prices and len(prices) > 0:
+            return float(prices[0])
     except:
-        return None
+        pass
+    
+    # Fallback: check if market has cached/stale price data
+    if market.get("_cached_yes_price"):
+        return market.get("_cached_yes_price")
+    
+    return None
 
 def polymarket_url(market: dict | None, question: str) -> str:
     """Robust URL builder: Direct question parsing + API slug fallback."""
@@ -496,6 +517,16 @@ def render():
             m = live_markets.get(t.market_id)
             yes_cp = get_yes_price(m) if m else None
             cp = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp is not None else None)
+            
+            # Fallback: if no live price from API, use p_market from trade record as reference
+            if cp is None:
+                fallback_price = t.p_market if t.side == "YES" else (1.0 - t.p_market)
+                cp_display = f"{fallback_price:.3f}" if fallback_price > 0 else "—"
+                is_live_price = False
+            else:
+                cp_display = f"{cp:.3f}"
+                is_live_price = True
+            
             unr = calc_unrealised(t, yes_cp)
             entry = t.avg_price if getattr(t, 'avg_price', 0) > 0 else t.p_market
             be = breakeven_price(t)
@@ -515,7 +546,9 @@ def render():
             cols[2].markdown(f'<span class="mono">${t.bet_size:.2f}</span>', unsafe_allow_html=True)
             cols[3].markdown(f'<span class="mono">{entry:.3f}</span>', unsafe_allow_html=True)
             cols[4].markdown(f'<span class="mono" style="color:#8080c0">{be}</span>', unsafe_allow_html=True)
-            cols[5].markdown(f'<span class="mono">{cp:.3f}</span>' if cp is not None else '<span class="mono" style="color:#404060">—</span>', unsafe_allow_html=True)
+            # Current price: show live if available, fallback to p_market with faded style if not
+            price_style = "color:#ffffff" if is_live_price else "color:#606080"
+            cols[5].markdown(f'<span class="mono" style="{price_style}">{cp_display}</span>', unsafe_allow_html=True)
             cols[6].markdown(f'<span class="{pnl_cls(unr)}">{fmt(unr)}</span>', unsafe_allow_html=True)
             pnl_pct_str = f"{'+' if unr >= 0 else ''}{unr/t.bet_size*100:.1f}%" if t.bet_size > 0 else "—"
             cols[7].markdown(f'<span class="{pnl_cls(unr)}">{pnl_pct_str}</span>', unsafe_allow_html=True)
