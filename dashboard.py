@@ -397,6 +397,53 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
     # Fallback to Polymarket home
     return "https://polymarket.com"
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_visual_resolution(market_id: str, question: str, side: str, avg_price: float) -> dict | None:
+    """
+    Fetch final outcome from Gamma API for an expired-but-unresolved trade.
+    Cached per (market_id, side, avg_price) for 5 minutes to avoid hammering
+    the API on every Streamlit rerun.
+
+    Returns dict with keys: yes_won, pnl, bet_won — or None if API unavailable.
+    Never writes to trades.jsonl. Read-only, display-only.
+    """
+    m = fetch_market(question, market_id)
+    if not m:
+        return None
+
+    prices = m.get("outcomePrices") or []
+    if isinstance(prices, str):
+        try:
+            import ast
+            prices = ast.literal_eval(prices)
+        except Exception:
+            return None
+
+    if len(prices) < 2:
+        return None
+
+    try:
+        yes_price = float(prices[0])
+    except (ValueError, TypeError):
+        return None
+
+    # Only resolve if the market has actually settled (price snapped to 0 or 1)
+    if 0.05 < yes_price < 0.95:
+        return None  # still live / not yet resolved by Polymarket
+
+    yes_won  = yes_price > 0.5
+    bet_won  = (side == "YES" and yes_won) or (side == "NO" and not yes_won)
+    entry    = avg_price if avg_price > 0 else 0.5
+
+    if bet_won:
+        effective_entry = entry if side == "YES" else (1.0 - entry)
+        pnl = round(avg_price * (1.0 / effective_entry - 1.0), 2) if effective_entry > 0 else 0.0
+    else:
+        pnl = -avg_price  # will be scaled by bet_size at render time
+
+    return {"yes_won": yes_won, "bet_won": bet_won, "raw_pnl_multiplier": pnl}
+
+
 def fmt_time_remaining(end_date_str: str) -> tuple[str, str]:
     if not end_date_str: return "—", "time-ok"
     try:
@@ -486,8 +533,29 @@ def render():
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
 
     trades = load_trades()
-    open_trades = [t for t in trades if t.outcome is None]
-    resolved = sorted([t for t in trades if t.outcome is not None], key=lambda x: x.timestamp, reverse=True)
+    now = datetime.now(timezone.utc)
+
+    # ── Classify trades ───────────────────────────────────────────────────────
+    # truly_open   : outcome=None AND not yet expired
+    # visually_resolved : outcome=None BUT end_date has passed → Option E
+    # resolved     : outcome is set (bot has written the final result)
+    truly_open        = []
+    visually_resolved = []  # expired but not yet written by bot
+    for t in [tr for tr in trades if tr.outcome is None]:
+        end_str = extract_expiry_from_question(t.question) or ""
+        if end_str:
+            try:
+                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                if end_dt < now:
+                    visually_resolved.append(t)
+                    continue
+            except Exception:
+                pass
+        truly_open.append(t)
+
+    open_trades = truly_open
+    bot_resolved = sorted([t for t in trades if t.outcome is not None],
+                          key=lambda x: x.timestamp, reverse=True)
 
     live_markets = {}
     for t in open_trades:
@@ -495,16 +563,47 @@ def render():
         if m:
             live_markets[t.market_id] = m
 
-    total_invested = sum(t.bet_size for t in open_trades)
-    total_realised = sum(t.pnl or 0 for t in resolved)
+    # ── Visual resolution: fetch outcomes for expired trades ──────────────────
+    # Cached per (market_id, side, avg_price), TTL=300s. Read-only — no file writes.
+    vr_results: dict[str, dict] = {}  # market_id → resolution dict
+    for t in visually_resolved:
+        res = fetch_visual_resolution(t.market_id, t.question, t.side, t.avg_price or t.p_market)
+        if res:
+            vr_results[t.market_id] = res
+
+    # Build combined resolved list: bot-resolved first, then visually-resolved
+    # Visually-resolved get a synthetic pnl for display; outcome stays None in JSON
+    resolved_display = list(bot_resolved)
+    for t in sorted(visually_resolved, key=lambda x: x.timestamp, reverse=True):
+        res = vr_results.get(t.market_id)
+        if res:
+            # Compute actual pnl from bet_size
+            bet_won = res["bet_won"]
+            entry   = t.avg_price if t.avg_price > 0 else t.p_market
+            eff_entry = entry if t.side == "YES" else (1.0 - entry)
+            pnl_vis = round(t.bet_size * (1.0 / eff_entry - 1.0), 2) if (bet_won and eff_entry > 0) else round(-t.bet_size, 2)
+            # Attach visual resolution as extra attrs (display only)
+            t._vis_pnl     = pnl_vis        # type: ignore[attr-defined]
+            t._vis_won     = bet_won         # type: ignore[attr-defined]
+            t._vis_pending = True            # type: ignore[attr-defined]  ← bot hasn't written yet
+        else:
+            t._vis_pnl     = None            # type: ignore[attr-defined]
+            t._vis_won     = None            # type: ignore[attr-defined]
+            t._vis_pending = True            # type: ignore[attr-defined]
+        resolved_display.append(t)
+
+    # ── Metrics ───────────────────────────────────────────────────────────────
+    total_invested   = sum(t.bet_size for t in open_trades)
+    total_realised   = sum(t.pnl or 0 for t in bot_resolved)
+    # Include visually-resolved pnl in unrealised display so totals add up
     total_unrealised = sum(calc_unrealised(t, get_yes_price(live_markets.get(t.market_id))) for t in open_trades)
-    total_pnl = total_realised + total_unrealised
-    bankroll = STARTING_BANKROLL + total_realised
-    cash_left = STARTING_BANKROLL - total_invested
-    wins = sum(1 for t in resolved if (t.pnl or 0) > 0)
-    losses = len(resolved) - wins
+    total_pnl        = total_realised + total_unrealised
+    bankroll         = STARTING_BANKROLL + total_realised
+    cash_left        = STARTING_BANKROLL - total_invested
+    wins   = sum(1 for t in bot_resolved if (t.pnl or 0) > 0)
+    losses = len(bot_resolved) - wins
     win_rate = f"{wins/(wins+losses)*100:.0f}%" if wins + losses > 0 else "—"
-    pnl_pct = f"{(total_pnl/total_invested*100):+.1f}%" if total_invested > 0 else "—"
+    pnl_pct  = f"{(total_pnl/total_invested*100):+.1f}%" if total_invested > 0 else "—"
 
     last_scan = "—"
     if trades:
@@ -671,41 +770,77 @@ def render():
             cols[11].markdown(f'<a href="{url}" target="_blank" class="link-btn">↗</a>', unsafe_allow_html=True)
 
     # Resolved Trades
-    st.markdown(f'<div class="section-title">RESOLVED TRADES ({len(resolved)})</div>', unsafe_allow_html=True)
-    if not resolved:
+    st.markdown(f'<div class="section-title">RESOLVED TRADES ({len(resolved_display)})</div>', unsafe_allow_html=True)
+    if not resolved_display:
         st.markdown('<div class="empty-state">No resolved trades yet</div>', unsafe_allow_html=True)
     else:
-        # Add "Date of Expiry" column
-        hcols = st.columns([0.6, 0.75, 0.75, 0.85, 0.7, 5.0, 0.95, 0.95])
+        hcols = st.columns([0.6, 0.75, 0.95, 0.85, 0.7, 5.0, 0.95, 0.95])
         for c, h in zip(hcols, ["Side", "Stake", "Result", "PnL", "PnL%", "Market", "Bought", "Closed"]):
             c.markdown(f'<p class="col-header">{h}</p>', unsafe_allow_html=True)
 
-        for t in resolved:
-            won = (t.pnl or 0) > 0
-            pnl_pct_t = f"{((t.pnl or 0)/t.bet_size*100):+.0f}%" if t.bet_size > 0 else "—"
-            
-            # Get market data to find expiry date
-            m = live_markets.get(t.market_id)
-            end_dt = m.get("endDate", "") if m else ""
-            # Fallback: extract expiry from question
-            if not end_dt:
-                end_dt = extract_expiry_from_question(t.question) or ""
-            # Format expiry date for display
-            expiry_display = fmt_timestamp(end_dt) if end_dt else "—"
-            
-            cols = st.columns([0.6, 0.75, 0.75, 0.85, 0.7, 5.0, 0.95, 0.95])
-            conf_label, conf_cls = confidence_tier(t.edge)
-            cols[0].markdown(f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> <span class="{conf_cls}">{conf_label}</span>', unsafe_allow_html=True)
-            cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>', unsafe_allow_html=True)
-            cols[2].markdown(f'<span class="badge-{"won" if won else "lost"}">{"WON ✓" if won else "LOST ✗"}</span>', unsafe_allow_html=True)
-            cols[3].markdown(f'<span class="{pnl_cls(t.pnl or 0)}">{fmt(t.pnl or 0)}</span>', unsafe_allow_html=True)
-            cols[4].markdown(f'<span class="{pnl_cls(t.pnl or 0)}">{pnl_pct_t}</span>', unsafe_allow_html=True)
-            cols[5].markdown(f'<span class="question-text">{t.question}</span>', unsafe_allow_html=True)
-            cols[6].markdown(f'<span class="mono">{fmt_timestamp(t.timestamp)}</span>', unsafe_allow_html=True)
-            cols[7].markdown(f'<span class="mono">{expiry_display}</span>', unsafe_allow_html=True)
+        for t in resolved_display:
+            is_vis = getattr(t, "_vis_pending", False)
+
+            if is_vis:
+                # Visually-resolved: outcome fetched from Gamma, not yet written by bot
+                vis_won = getattr(t, "_vis_won", None)
+                vis_pnl = getattr(t, "_vis_pnl", None)
+
+                if vis_won is None:
+                    # Gamma API couldn't confirm yet — show as "Awaiting"
+                    result_html = '<span style="color:#606080;font-size:10px">⏳ Awaiting</span>'
+                    pnl_val     = 0.0
+                    pnl_str     = "—"
+                    pnl_pct_str = "—"
+                else:
+                    result_html = (
+                        '<span class="badge-won">WON ✓</span> '
+                        '<span style="color:#404060;font-size:9px">✅ bot pending</span>'
+                        if vis_won else
+                        '<span class="badge-lost">LOST ✗</span> '
+                        '<span style="color:#404060;font-size:9px">✅ bot pending</span>'
+                    )
+                    pnl_val     = vis_pnl or 0.0
+                    pnl_str     = fmt(pnl_val)
+                    pnl_pct_str = f"{pnl_val/t.bet_size*100:+.0f}%" if t.bet_size > 0 else "—"
+
+                end_str      = extract_expiry_from_question(t.question) or ""
+                expiry_disp  = fmt_timestamp(end_str) if end_str else "—"
+
+                cols = st.columns([0.6, 0.75, 0.95, 0.85, 0.7, 5.0, 0.95, 0.95])
+                conf_label, conf_cls = confidence_tier(t.edge)
+                cols[0].markdown(f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> <span class="{conf_cls}">{conf_label}</span>', unsafe_allow_html=True)
+                cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>', unsafe_allow_html=True)
+                cols[2].markdown(result_html, unsafe_allow_html=True)
+                cols[3].markdown(f'<span class="{pnl_cls(pnl_val)}">{pnl_str}</span>', unsafe_allow_html=True)
+                cols[4].markdown(f'<span class="{pnl_cls(pnl_val)}">{pnl_pct_str}</span>', unsafe_allow_html=True)
+                cols[5].markdown(f'<span class="question-text">{t.question}</span>', unsafe_allow_html=True)
+                cols[6].markdown(f'<span class="mono">{fmt_timestamp(t.timestamp)}</span>', unsafe_allow_html=True)
+                cols[7].markdown(f'<span class="mono">{expiry_disp}</span>', unsafe_allow_html=True)
+
+            else:
+                # Bot-resolved: outcome + pnl written to trades.jsonl
+                won         = (t.pnl or 0) > 0
+                pnl_pct_t   = f"{((t.pnl or 0)/t.bet_size*100):+.0f}%" if t.bet_size > 0 else "—"
+                m           = live_markets.get(t.market_id)
+                end_dt      = m.get("endDate", "") if m else ""
+                if not end_dt:
+                    end_dt  = extract_expiry_from_question(t.question) or ""
+                expiry_disp = fmt_timestamp(end_dt) if end_dt else "—"
+
+                cols = st.columns([0.6, 0.75, 0.95, 0.85, 0.7, 5.0, 0.95, 0.95])
+                conf_label, conf_cls = confidence_tier(t.edge)
+                cols[0].markdown(f'<span class="badge-{"yes" if t.side=="YES" else "no"}">{t.side}</span> <span class="{conf_cls}">{conf_label}</span>', unsafe_allow_html=True)
+                cols[1].markdown(f'<span class="mono">${t.bet_size:.2f}</span>', unsafe_allow_html=True)
+                cols[2].markdown(f'<span class="badge-{"won" if won else "lost"}">{"WON ✓" if won else "LOST ✗"}</span>', unsafe_allow_html=True)
+                cols[3].markdown(f'<span class="{pnl_cls(t.pnl or 0)}">{fmt(t.pnl or 0)}</span>', unsafe_allow_html=True)
+                cols[4].markdown(f'<span class="{pnl_cls(t.pnl or 0)}">{pnl_pct_t}</span>', unsafe_allow_html=True)
+                cols[5].markdown(f'<span class="question-text">{t.question}</span>', unsafe_allow_html=True)
+                cols[6].markdown(f'<span class="mono">{fmt_timestamp(t.timestamp)}</span>', unsafe_allow_html=True)
+                cols[7].markdown(f'<span class="mono">{expiry_disp}</span>', unsafe_allow_html=True)
 
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center;font-family:Space Mono,monospace;font-size:10px;color:#202035'>{len(open_trades)} open · {len(resolved)} resolved · Bankroll ${STARTING_BANKROLL:,.0f}</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center;font-family:Space Mono,monospace;font-size:10px;color:#202035'>{len(open_trades)} open · {len(visually_resolved)} awaiting bot · {len(bot_resolved)} resolved · Bankroll ${STARTING_BANKROLL:,.0f}</p>", unsafe_allow_html=True)
 
 
 render()
