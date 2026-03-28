@@ -484,7 +484,9 @@ def extract_expiry_from_question(question: str) -> str | None:
         month = months[date_m.group(1)]
         day = int(date_m.group(2))
         year = datetime.now().year
-        return f"{year}-{month:02d}-{day:02d}T23:59:59Z"
+        # Use 12:00 UTC — Polymarket settles crypto markets around midday.
+        # Using 23:59:59 caused same-day markets to stay in Open until midnight.
+        return f"{year}-{month:02d}-{day:02d}T12:00:00Z"
     
     return None
 
