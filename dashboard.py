@@ -19,21 +19,53 @@ except ImportError:
 import yfinance as yf
 
 # ── Gold Price Helpers (for accurate current prices on gold markets) ─────────────
-def get_gold_spot_price() -> float | None:
+def get_current_gold_price() -> float | None:
     """
-    Fetch current gold spot price from Yahoo Finance (GC=F is COMEX Gold futures).
-    Returns None if yfinance unavailable or fetch fails.
-    """
-    if not HAS_YFINANCE:
-        return None
+    Robust multi-source gold spot price fetcher.
+    Uses the same philosophy as bot.py _get_current_asset_price() for gold.
     
-    try:
-        gold = yf.Ticker("GC=F")
-        data = gold.history(period="1d")
-        if not data.empty:
-            return float(data['Close'].iloc[-1])
-    except Exception:
-        pass
+    Tries multiple sources in order:
+    1. Yahoo Finance GC=F (COMEX futures) — most accurate
+    2. gold-api.com — very reliable
+    3. metals.live — simple & fast
+    4. Binance PAXG (tokenized gold) — last resort
+    
+    Returns None if all sources fail.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
+    
+    sources = [
+        # 1. Yahoo Finance GC=F
+        ("https://query1.finance.yahoo.com/v8/finance/chart/GC=F",
+         lambda d: float(d.get("chart", {}).get("result", [{}])[0].get("meta", {}).get("regularMarketPrice", 0))),
+        
+        # 2. gold-api.com
+        ("https://api.gold-api.com/price/XAU",
+         lambda d: float(d.get("price") or d.get("Price") or 0)),
+        
+        # 3. metals.live
+        ("https://api.metals.live/v1/spot/gold",
+         lambda d: float(d.get("price") or 0)),
+        
+        # 4. Binance PAXG (tokenized gold)
+        ("https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT",
+         lambda d: float(d.get("price") or 0)),
+    ]
+    
+    for url, extractor in sources:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read().decode())
+            price = extractor(data)
+            if price and 500 < price < 10000:  # sanity check for gold spot
+                return round(price, 2)
+        except Exception:
+            continue  # try next source
+    
     return None
 
 def gold_price_to_market_price(spot_price: float, target_price: float, side: str = "YES") -> float | None:
@@ -715,19 +747,35 @@ def render():
             # Get current price: try API first
             yes_cp = get_yes_price(m) if m else None
             
-            # If no API price for gold markets, fetch real spot price
+            # Robust gold fallback: multi-source spot price → market inference
             if yes_cp is None and is_gold_market:
-                spot_price = get_gold_spot_price()
-                target_m = re.search(r'\$?([\d,]+(?:\.\d+)?)', t.question)
-                if spot_price and target_m:
-                    target_price = float(target_m.group(1).replace(",", ""))
-                    # Determine if it's "above" or "below"
-                    is_above = "above" in t.question.lower()
-                    yes_cp = gold_price_to_market_price(spot_price, target_price, side="YES" if is_above else "NO")
+                spot_price = get_current_gold_price()
+                if spot_price:
+                    # Improved regex: handles "above $3200", "over 3150", "below $2900", etc.
+                    target_match = re.search(
+                        r'(?:above|over|below|under)\s*\$?([\d,]+(?:\.\d+)?)',
+                        t.question,
+                        re.IGNORECASE
+                    )
+                    if target_match:
+                        try:
+                            target_price = float(target_match.group(1).replace(",", ""))
+                            is_above = any(
+                                word in t.question.lower()
+                                for word in ["above", "over", "higher"]
+                            )
+                            yes_cp = gold_price_to_market_price(
+                                spot_price,
+                                target_price,
+                                side="YES" if is_above else "NO"
+                            )
+                        except Exception:
+                            pass  # regex parse failed, skip
             
-            # If still no price, use entry price (p_market) as fallback for crypto
-            if yes_cp is None and not is_gold_market:
-                yes_cp = t.p_market
+            # Universal fallback for ALL assets (crypto + gold)
+            # Use entry price if live price unavailable
+            if yes_cp is None:
+                yes_cp = t.avg_price if getattr(t, 'avg_price', 0) > 0 else t.p_market
             
             # Convert to side-aware price
             cp = yes_cp if t.side == "YES" else (1.0 - yes_cp if yes_cp is not None else None)
