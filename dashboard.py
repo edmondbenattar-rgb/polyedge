@@ -386,12 +386,25 @@ def polymarket_url(market: dict | None, question: str, market_id: str = None) ->
     
     # GOLD MARKETS
     if "gold" in q or "gc" in q:
+        # Extract price target: "above $4400" or "over $4600"
         price_match = re.search(r'(?:over|above)\s+\$?([\d,]+(?:\.\d+)?)', question, re.IGNORECASE)
-        if price_match:
+        # Extract date: "March 2026", "June 2026", etc.
+        date_match = re.search(
+            r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})',
+            question,
+            re.IGNORECASE
+        )
+        
+        if price_match and date_match:
             price = price_match.group(1).replace(",", "")
-            event_slug = "gc-over-under-jun-2026"
-            market_slug = f"gc-above-{price}-jun-2026"
+            month = date_match.group(1).lower()
+            year = date_match.group(2)
+            # Construct event slug: "gc-over-under-jun-2026"
+            event_slug = f"gc-over-under-{month}-{year}"
+            # Construct market slug: "gc-above-4400-jun-2026"
+            market_slug = f"gc-above-{price}-{month}-{year}"
             return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+        
         return "https://polymarket.com"
     
     # CRYPTO MARKETS
