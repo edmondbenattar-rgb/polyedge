@@ -544,36 +544,15 @@ def breakeven_price(record: TradeRecord) -> str:
     if avg <= 0: return "—"
     return f"{avg:.3f}" if record.side == "YES" else f"{1.0 - avg:.3f}"
 
-def calc_unrealised(t: TradeRecord, current_yes_price: float | None) -> float:
-    """
-    Mark-to-market unrealized PnL for Polymarket (share mechanics).
-    Matches exactly how _resolve_open_positions() and visual resolution compute PnL.
-    
-    Formula: PnL = stake * (current_side_price / entry_price - 1)
-    This correctly models buying shares at entry_price and revaluing at current_side_price.
-    """
-    if current_yes_price is None or current_yes_price <= 0 or current_yes_price >= 1:
-        return 0.0
-
-    stake = t.bet_size
-    # Entry price = price actually paid for the outcome we bought
-    entry = getattr(t, 'avg_price', 0) or t.p_market
-    if entry <= 0:
-        return 0.0
-
-    # Current price of the outcome we bought
-    if t.side.upper() == "YES":
-        curr_price = current_yes_price
-    else:  # NO
-        curr_price = 1.0 - current_yes_price
-
-    if curr_price <= 0:
-        return -stake
-    if curr_price >= 1:
-        return round(stake * (1.0 / entry - 1.0), 2)
-
-    # Mark-to-market PnL
-    return round(stake * (curr_price / entry - 1.0), 2)
+def calc_unrealised(record: TradeRecord, current_yes: float | None) -> float:
+    if current_yes is None: return 0.0
+    avg = record.avg_price if getattr(record, 'avg_price', 0) > 0 else record.p_market
+    if avg <= 0: return 0.0
+    if record.side == "YES":
+        return round(record.bet_size * (current_yes / avg - 1), 2)
+    else:
+        current_no = 1.0 - current_yes
+        return round(record.bet_size * (current_no / avg - 1), 2) if avg > 0 else 0.0
 
 def pnl_cls(v: float) -> str:
     return "pnl-positive" if v > 0 else ("pnl-negative" if v < 0 else "pnl-neutral")
