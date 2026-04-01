@@ -545,14 +545,24 @@ def breakeven_price(record: TradeRecord) -> str:
     return f"{avg:.3f}" if record.side == "YES" else f"{1.0 - avg:.3f}"
 
 def calc_unrealised(record: TradeRecord, current_yes: float | None) -> float:
-    if current_yes is None: return 0.0
+    if current_yes is None or current_yes <= 0 or current_yes >= 1:
+        return 0.0
     avg = record.avg_price if getattr(record, 'avg_price', 0) > 0 else record.p_market
-    if avg <= 0: return 0.0
+    if avg <= 0:
+        return 0.0
     if record.side == "YES":
-        return round(record.bet_size * (current_yes / avg - 1), 2)
+        curr_price = current_yes
+        entry = avg
     else:
-        current_no = 1.0 - current_yes
-        return round(record.bet_size * (current_no / avg - 1), 2) if avg > 0 else 0.0
+        curr_price = 1.0 - current_yes
+        entry = 1.0 - avg          # NO shares were bought at (1 - YES entry price)
+    if entry <= 0:
+        return 0.0
+    if curr_price <= 0:
+        return -record.bet_size
+    if curr_price >= 1:
+        return round(record.bet_size * (1.0 / entry - 1.0), 2)
+    return round(record.bet_size * (curr_price / entry - 1.0), 2)
 
 def pnl_cls(v: float) -> str:
     return "pnl-positive" if v > 0 else ("pnl-negative" if v < 0 else "pnl-neutral")
