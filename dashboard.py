@@ -630,7 +630,7 @@ def manual_sell(record: TradeRecord) -> tuple[bool, str]:
                 continue
             try:
                 data = json.loads(line)
-                if data.get("market_id") == record.market_id and data.get("outcome") is None:
+                if data.get("market_id") == record.market_id and data.get("timestamp") == record.timestamp and data.get("outcome") is None:
                     data["outcome"]      = outcome_val
                     data["pnl"]          = final_pnl
                     data["manual_sell"]  = True
@@ -923,16 +923,17 @@ def render():
             cols[11].markdown(f'<a href="{url}" target="_blank" class="link-btn">↗</a>', unsafe_allow_html=True)
 
             # Sell button — two-click confirmation per row
-            is_pending = st.session_state.sell_pending == t.market_id
+            row_key = f"{t.market_id}_{t.timestamp}"
+            is_pending = st.session_state.sell_pending == row_key
             if is_pending:
-                if cols[12].button("sure?", key=f"sell_confirm_{t.market_id}", use_container_width=True):
+                if cols[12].button("sure?", key=f"sell_confirm_{row_key}", use_container_width=True):
                     success, msg = manual_sell(t)
                     st.session_state.sell_pending = None
                     st.session_state.sell_msg = msg
                     st.rerun()
             else:
-                if cols[12].button("✕ sell", key=f"sell_{t.market_id}", use_container_width=True):
-                    st.session_state.sell_pending = t.market_id
+                if cols[12].button("✕ sell", key=f"sell_{row_key}", use_container_width=True):
+                    st.session_state.sell_pending = row_key
                     st.rerun()
 
         # Show sell result message (success or error) above the table
