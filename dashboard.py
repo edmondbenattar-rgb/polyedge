@@ -193,6 +193,8 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; background-color: 
 .pnl-neutral  { color: #6060a0; font-family: 'Space Mono', monospace; font-size: 11.5px; }
 .time-urgent, .time-soon, .time-ok { font-family: 'Space Mono', monospace; font-size: 10.4px; font-weight: 700; }
 .link-btn { color: #6060c0; font-size: 11px; text-decoration: none; }
+.sell-confirm { color: #ffb400 !important; font-size: 9px !important; padding: 2px 4px !important; }
+.sell-execute { color: #ff4466 !important; font-size: 9px !important; padding: 2px 4px !important; }
 .dry-run-badge { background: rgba(255,180,0,0.1); color: #ffb400; border: 1px solid #ffb40040; padding: 3px 12px; border-radius: 20px; font-size: 10.5px; }
 .empty-state { text-align: center; padding: 40px; font-size: 13px; color: #404060; }
 
@@ -575,6 +577,80 @@ def confidence_tier(edge: float) -> tuple[str, str]:
 def fmt(v: float) -> str:
     return f"{'+' if v >= 0 else ''}${v:.2f}"
 
+def manual_sell(record: TradeRecord) -> tuple[bool, str]:
+    """
+    Execute a manual sell for an open trade.
+    1. Fresh-fetches current YES price from Gamma API.
+    2. Computes final PnL using calc_unrealised logic.
+    3. Rewrites the matching line in trades.jsonl with outcome + pnl set.
+    Returns (success: bool, message: str).
+    """
+    # Fresh fetch — bypass page-load cache entirely
+    m = fetch_market(record.question, record.market_id)
+    if m is None:
+        return False, "❌ Could not fetch market price. Gamma API unavailable — try again."
+
+    yes_price = get_yes_price(m)
+    if yes_price is None:
+        return False, "❌ Market returned no price data. Try again in a moment."
+
+    # Compute final PnL (same formula as calc_unrealised)
+    avg = record.avg_price if getattr(record, 'avg_price', 0) > 0 else record.p_market
+    if avg <= 0:
+        return False, "❌ Invalid entry price on record — cannot compute PnL."
+
+    if record.side == "YES":
+        curr_price = yes_price
+        entry = avg
+    else:
+        curr_price = 1.0 - yes_price
+        entry = 1.0 - avg
+
+    if entry <= 0:
+        return False, "❌ Invalid entry price computed — cannot sell."
+
+    # Clamp to valid range
+    curr_price = max(0.001, min(0.999, curr_price))
+    final_pnl  = round(record.bet_size * (curr_price / entry - 1.0), 2)
+
+    # Outcome: 1.0 if curr_price > entry (profitable), 0.0 otherwise — manual sell marker
+    outcome_val = round(curr_price, 6)  # store sell price as outcome for audit trail
+
+    # Rewrite trades.jsonl — find matching market_id line, update it
+    if not os.path.exists(TRADE_FILE):
+        return False, "❌ trades.jsonl not found."
+
+    lines = []
+    matched = False
+    with open(TRADE_FILE, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                lines.append(line)
+                continue
+            try:
+                data = json.loads(line)
+                if data.get("market_id") == record.market_id and data.get("outcome") is None:
+                    data["outcome"]      = outcome_val
+                    data["pnl"]          = final_pnl
+                    data["manual_sell"]  = True
+                    data["sell_time"]    = datetime.now(timezone.utc).isoformat()
+                    line = json.dumps(data)
+                    matched = True
+            except Exception:
+                pass
+            lines.append(line)
+
+    if not matched:
+        return False, "❌ Trade not found in trades.jsonl (already resolved?)."
+
+    with open(TRADE_FILE, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+    direction = "profit" if final_pnl >= 0 else "loss"
+    return True, f"✅ Sold at {curr_price:.3f} · PnL: {fmt(final_pnl)} ({direction})"
+
+
 def identify_asset(question: str) -> str:
     q = question.lower()
     if "bitcoin" in q or "btc" in q: return "BTC"
@@ -717,6 +793,10 @@ def render():
         if "sort_col" not in st.session_state:
             st.session_state.sort_col = "bought"
             st.session_state.sort_asc = False
+        if "sell_pending" not in st.session_state:
+            st.session_state.sell_pending = None  # market_id awaiting confirmation
+        if "sell_msg" not in st.session_state:
+            st.session_state.sell_msg = None
 
         def sort_key(t):
             m = live_markets.get(t.market_id)
@@ -743,7 +823,7 @@ def render():
             ("side", "Side", 0.52), ("conf", "Conf", 0.52), ("stake", "Stake", 0.72),
             ("entry", "Entry", 0.62), (None, "BE", 0.62), ("current", "Current", 0.62),
             ("pnl", "Unreal PnL", 0.88), ("pnlpct", "PnL%", 0.68), ("market", "Market", 5.0),
-            ("bought", "Bought", 0.88), ("closes_in", "Closes In", 0.72), (None, "🔗", 0.38)
+            ("bought", "Bought", 0.88), ("closes_in", "Closes In", 0.72), (None, "🔗", 0.38), (None, "SELL", 0.55)
         ]
 
         hcols = st.columns([c[2] for c in SORT_COLS])
@@ -841,6 +921,24 @@ def render():
             cols[9].markdown(f'<span class="mono">{bought}</span>', unsafe_allow_html=True)
             cols[10].markdown(f'<span class="{time_cls}">{time_r}</span>', unsafe_allow_html=True)
             cols[11].markdown(f'<a href="{url}" target="_blank" class="link-btn">↗</a>', unsafe_allow_html=True)
+
+            # Sell button — two-click confirmation per row
+            is_pending = st.session_state.sell_pending == t.market_id
+            if is_pending:
+                if cols[12].button("sure?", key=f"sell_confirm_{t.market_id}", use_container_width=True):
+                    success, msg = manual_sell(t)
+                    st.session_state.sell_pending = None
+                    st.session_state.sell_msg = msg
+                    st.rerun()
+            else:
+                if cols[12].button("✕ sell", key=f"sell_{t.market_id}", use_container_width=True):
+                    st.session_state.sell_pending = t.market_id
+                    st.rerun()
+
+        # Show sell result message (success or error) above the table
+        if st.session_state.sell_msg:
+            st.info(st.session_state.sell_msg)
+            st.session_state.sell_msg = None
 
     # Resolved Trades
     st.markdown(f'<div class="section-title">RESOLVED TRADES ({len(resolved_display)})</div>', unsafe_allow_html=True)
