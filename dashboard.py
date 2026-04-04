@@ -668,14 +668,26 @@ def render():
     trades = load_trades()
     now = datetime.now(timezone.utc)
 
+    # ── Pre-fetch all unresolved markets (used for both classification + live prices) ──
+    # This gives us the API's real endDate so we never misclassify a trade as expired
+    # based on the hardcoded T12:00:00Z guess in extract_expiry_from_question.
+    all_unresolved = [tr for tr in trades if tr.outcome is None]
+    live_markets: dict = {}
+    for t in all_unresolved:
+        m = fetch_market(t.question, t.market_id)
+        if m:
+            live_markets[t.market_id] = m
+
     # ── Classify trades ───────────────────────────────────────────────────────
-    # truly_open   : outcome=None AND not yet expired
-    # visually_resolved : outcome=None BUT end_date has passed → Option E
-    # resolved     : outcome is set (bot has written the final result)
+    # truly_open        : outcome=None AND not yet expired
+    # visually_resolved : outcome=None BUT end_date has passed → fetch outcome from API
+    # resolved          : outcome is set (bot has written the final result)
     truly_open        = []
-    visually_resolved = []  # expired but not yet written by bot
-    for t in [tr for tr in trades if tr.outcome is None]:
-        end_str = extract_expiry_from_question(t.question) or ""
+    visually_resolved = []
+    for t in all_unresolved:
+        m = live_markets.get(t.market_id)
+        # Prefer API endDate (accurate); fall back to regex extraction
+        end_str = (m.get("endDate", "") if m else "") or extract_expiry_from_question(t.question) or ""
         if end_str:
             try:
                 end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
@@ -689,12 +701,6 @@ def render():
     open_trades = truly_open
     bot_resolved = sorted([t for t in trades if t.outcome is not None],
                           key=lambda x: x.timestamp, reverse=True)
-
-    live_markets = {}
-    for t in open_trades:
-        m = fetch_market(t.question, t.market_id)
-        if m:
-            live_markets[t.market_id] = m
 
     # ── Visual resolution: fetch outcomes for expired trades ──────────────────
     # Cached per (market_id, side, avg_price), TTL=300s. Read-only — no file writes.
