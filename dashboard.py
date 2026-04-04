@@ -483,8 +483,8 @@ def fetch_visual_resolution(market_id: str, question: str, side: str, avg_price:
     entry    = avg_price if avg_price > 0 else 0.5
 
     if bet_won:
-        effective_entry = entry if side == "YES" else (1.0 - entry)
-        pnl = round(avg_price * (1.0 / effective_entry - 1.0), 2) if effective_entry > 0 else 0.0
+        effective_entry = entry    # avg_price is always side-specific; no flip for NO
+        pnl = round(entry * (1.0 / effective_entry - 1.0), 2) if effective_entry > 0 else 0.0
     else:
         pnl = -avg_price  # will be scaled by bet_size at render time
 
@@ -538,7 +538,7 @@ def extract_expiry_from_question(question: str) -> str | None:
     return None
 
 def fmt_timestamp(ts: str) -> str:
-    try: return datetime.fromisoformat(ts).strftime("%m/%d %H:%M")
+    try: return datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%m/%d %H:%M")
     except: return "—"
 
 def breakeven_price(record: TradeRecord) -> str:
@@ -557,7 +557,7 @@ def calc_unrealised(record: TradeRecord, current_yes: float | None) -> float:
         entry = avg
     else:
         curr_price = 1.0 - current_yes
-        entry = 1.0 - avg          # NO shares were bought at (1 - YES entry price)
+        entry = avg                # avg_price already stores the NO price (side-specific)
     if entry <= 0:
         return 0.0
     if curr_price <= 0:
@@ -604,7 +604,7 @@ def manual_sell(record: TradeRecord) -> tuple[bool, str]:
         entry = avg
     else:
         curr_price = 1.0 - yes_price
-        entry = 1.0 - avg
+        entry = avg                # avg already IS the NO price, no flip needed
 
     if entry <= 0:
         return False, "❌ Invalid entry price computed — cannot sell."
@@ -713,7 +713,7 @@ def render():
             # Compute actual pnl from bet_size
             bet_won = res["bet_won"]
             entry   = t.avg_price if t.avg_price > 0 else t.p_market
-            eff_entry = entry if t.side == "YES" else (1.0 - entry)
+            eff_entry = entry      # avg_price is always side-specific; no flip for NO
             pnl_vis = round(t.bet_size * (1.0 / eff_entry - 1.0), 2) if (bet_won and eff_entry > 0) else round(-t.bet_size, 2)
             # Attach visual resolution as extra attrs (display only)
             t._vis_pnl     = pnl_vis        # type: ignore[attr-defined]
